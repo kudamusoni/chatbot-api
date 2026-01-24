@@ -1,0 +1,151 @@
+<?php
+
+namespace App\Models;
+
+use App\Enums\ConversationState;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
+
+class Conversation extends Model
+{
+    use HasFactory, HasUuids;
+
+    protected $fillable = [
+        'client_id',
+        'session_token_hash',
+        'state',
+        'context',
+        'last_event_id',
+        'last_activity_at',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'state' => ConversationState::class,
+            'context' => 'array',
+            'last_event_id' => 'integer',
+            'last_activity_at' => 'datetime',
+        ];
+    }
+
+    /**
+     * Generate a new session token and return it (raw).
+     * The hash is stored, but the raw token is returned for the client.
+     */
+    public static function generateSessionToken(): string
+    {
+        return Str::random(64);
+    }
+
+    /**
+     * Hash a session token for storage.
+     */
+    public static function hashSessionToken(string $token): string
+    {
+        return hash('sha256', $token);
+    }
+
+    /**
+     * Create a new conversation with a generated session token.
+     * Returns [Conversation, rawToken] tuple.
+     *
+     * @return array{0: Conversation, 1: string}
+     */
+    public static function createWithToken(string $clientId, array $attributes = []): array
+    {
+        $rawToken = self::generateSessionToken();
+        $hash = self::hashSessionToken($rawToken);
+
+        $conversation = self::create(array_merge($attributes, [
+            'client_id' => $clientId,
+            'session_token_hash' => $hash,
+            'state' => ConversationState::CHAT,
+        ]));
+
+        return [$conversation, $rawToken];
+    }
+
+    /**
+     * Find a conversation by its raw session token.
+     */
+    public static function findByToken(string $token): ?self
+    {
+        $hash = self::hashSessionToken($token);
+
+        return self::where('session_token_hash', $hash)->first();
+    }
+
+    /**
+     * Find a conversation by its raw session token within a specific client.
+     */
+    public static function findByTokenForClient(string $token, string $clientId): ?self
+    {
+        $hash = self::hashSessionToken($token);
+
+        return self::where('session_token_hash', $hash)
+            ->where('client_id', $clientId)
+            ->first();
+    }
+
+    /**
+     * Scope to filter by client.
+     */
+    public function scopeForClient(Builder $query, string $clientId): Builder
+    {
+        return $query->where('client_id', $clientId);
+    }
+
+    /**
+     * Scope to order by recent activity.
+     */
+    public function scopeRecentActivity(Builder $query): Builder
+    {
+        return $query->orderByDesc('last_activity_at');
+    }
+
+    /**
+     * Get the client that owns this conversation.
+     */
+    public function client(): BelongsTo
+    {
+        return $this->belongsTo(Client::class);
+    }
+
+    /**
+     * Get all events for this conversation.
+     */
+    public function events(): HasMany
+    {
+        return $this->hasMany(ConversationEvent::class)->orderBy('id');
+    }
+
+    /**
+     * Get all messages for this conversation (projection).
+     */
+    public function messages(): HasMany
+    {
+        return $this->hasMany(ConversationMessage::class)->orderBy('created_at');
+    }
+
+    /**
+     * Get all valuations for this conversation.
+     */
+    public function valuations(): HasMany
+    {
+        return $this->hasMany(Valuation::class);
+    }
+
+    /**
+     * Get events after a specific event ID (for SSE replay).
+     */
+    public function eventsAfter(int $afterId): HasMany
+    {
+        return $this->events()->where('id', '>', $afterId);
+    }
+}
