@@ -8,7 +8,25 @@ use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
+use Ramsey\Uuid\Uuid;
 
+/**
+ * Records conversation events to the event store.
+ *
+ * OPERATING RULES:
+ *
+ * 1. correlation_id: The DB column is nullable (for legacy/import scenarios), but
+ *    all app-created events MUST have a correlation_id. This recorder auto-generates
+ *    one if not provided. Never pass null explicitly for live operations.
+ *
+ * 2. idempotency_key: For idempotent events (e.g., user messages that may be retried),
+ *    idempotency_key MUST be non-null. For non-idempotent events, it MUST be null.
+ *    The unique(conversation_id, idempotency_key) constraint allows multiple NULLs
+ *    but prevents duplicate non-null keys. Never use empty string "".
+ *
+ * 3. payload: Always required, never null. Even "empty" events should have {}.
+ */
 class ConversationEventRecorder
 {
     /**
@@ -21,9 +39,10 @@ class ConversationEventRecorder
      * @param Conversation $conversation The conversation to record the event for
      * @param ConversationEventType $type The type of event
      * @param array $payload The event payload (required, not nullable)
-     * @param string|null $idempotencyKey Optional key for idempotent operations
-     * @param string|null $correlationId Optional correlation ID for linking related events
+     * @param string|null $idempotencyKey Key for idempotent events (non-null), or null for non-idempotent events
+     * @param string|null $correlationId UUID for tracing (auto-generated if not provided)
      * @return array{event: ConversationEvent, created: bool} The event and whether it was newly created
+     * @throws InvalidArgumentException If correlationId is provided but not a valid UUID
      */
     public function record(
         Conversation $conversation,
@@ -32,6 +51,13 @@ class ConversationEventRecorder
         ?string $idempotencyKey = null,
         ?string $correlationId = null
     ): array {
+        // Validate correlation ID is UUID if provided
+        if ($correlationId !== null && !Uuid::isValid($correlationId)) {
+            throw new InvalidArgumentException(
+                "Correlation ID must be a valid UUID, got: {$correlationId}"
+            );
+        }
+
         // If idempotency key provided, check for existing event first
         if ($idempotencyKey !== null) {
             $existing = ConversationEvent::where('conversation_id', $conversation->id)

@@ -14,6 +14,8 @@ use App\Models\Valuation;
 /**
  * Projects conversation events into read-optimized tables.
  *
+ * All projections are idempotent - safe to replay or retry.
+ *
  * Runs synchronously for now. In Step 2/3, consider making this
  * queued for long-running operations.
  *
@@ -39,7 +41,8 @@ class ConversationProjector
             ConversationEventType::USER_MESSAGE_CREATED,
             ConversationEventType::ASSISTANT_MESSAGE_CREATED => $this->projectMessage($event),
 
-            ConversationEventType::APPRAISAL_QUESTION_ASKED => $this->projectAppraisalQuestion($event),
+            ConversationEventType::APPRAISAL_QUESTION_ASKED => $this->projectAppraisalQuestionAsked($event),
+            ConversationEventType::APPRAISAL_CONFIRMATION_REQUESTED => $this->projectAppraisalConfirmationRequested($event),
             ConversationEventType::APPRAISAL_CONFIRMED => $this->projectAppraisalConfirmed($event),
 
             ConversationEventType::VALUATION_REQUESTED => $this->projectValuationRequested($event),
@@ -66,25 +69,31 @@ class ConversationProjector
 
     /**
      * Project a message event into conversation_messages.
+     *
+     * Idempotent via unique(conversation_id, event_id) constraint.
      */
     protected function projectMessage(ConversationEvent $event): void
     {
-        // Extract content from payload
         $content = $event->payload['content'] ?? '';
 
-        ConversationMessage::create([
-            'conversation_id' => $event->conversation_id,
-            'client_id' => $event->client_id,
-            'event_id' => $event->id,
-            'role' => $event->messageRole(),
-            'content' => $content,
-        ]);
+        // Idempotent: each event can only create one message
+        ConversationMessage::firstOrCreate(
+            [
+                'conversation_id' => $event->conversation_id,
+                'event_id' => $event->id,
+            ],
+            [
+                'client_id' => $event->client_id,
+                'role' => $event->messageRole(),
+                'content' => $content,
+            ]
+        );
     }
 
     /**
-     * Project an appraisal question asked event.
+     * Project appraisal.question.asked - enters APPRAISAL_INTAKE.
      */
-    protected function projectAppraisalQuestion(ConversationEvent $event): void
+    protected function projectAppraisalQuestionAsked(ConversationEvent $event): void
     {
         $conversation = Conversation::find($event->conversation_id);
 
@@ -96,9 +105,10 @@ class ConversationProjector
     }
 
     /**
-     * Project an appraisal confirmed event.
+     * Project appraisal.confirmation.requested - shows confirmation panel.
+     * State: APPRAISAL_CONFIRM
      */
-    protected function projectAppraisalConfirmed(ConversationEvent $event): void
+    protected function projectAppraisalConfirmationRequested(ConversationEvent $event): void
     {
         $conversation = Conversation::find($event->conversation_id);
 
@@ -109,6 +119,21 @@ class ConversationProjector
                     $conversation->context ?? [],
                     ['appraisal' => $event->payload['appraisal'] ?? []]
                 ),
+            ]);
+        }
+    }
+
+    /**
+     * Project appraisal.confirmed - user confirmed, ready for valuation.
+     * State: VALUATION_RUNNING (triggers valuation job)
+     */
+    protected function projectAppraisalConfirmed(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if ($conversation) {
+            $conversation->update([
+                'state' => ConversationState::VALUATION_RUNNING,
             ]);
         }
     }

@@ -73,9 +73,17 @@ class Conversation extends Model
 
     /**
      * Find a conversation by its raw session token.
+     *
+     * @deprecated Use findByTokenForClient() for proper tenant isolation.
+     *             This method exists only for edge cases where client context is unavailable.
      */
     public static function findByToken(string $token): ?self
     {
+        trigger_error(
+            'Conversation::findByToken() is deprecated. Use findByTokenForClient() for tenant isolation.',
+            E_USER_DEPRECATED
+        );
+
         $hash = self::hashSessionToken($token);
 
         return self::where('session_token_hash', $hash)->first();
@@ -83,6 +91,7 @@ class Conversation extends Model
 
     /**
      * Find a conversation by its raw session token within a specific client.
+     * This is the preferred method for tenant-safe token lookups.
      */
     public static function findByTokenForClient(string $token, string $clientId): ?self
     {
