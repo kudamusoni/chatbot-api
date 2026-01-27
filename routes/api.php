@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\ClientController;
 use App\Http\Controllers\Admin\ConversationController;
 use App\Http\Controllers\Widget\BootstrapController;
 use App\Http\Controllers\Widget\ChatController;
+use App\Http\Controllers\Widget\SseController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -16,6 +17,7 @@ Route::get('/user', function (Request $request) {
 Route::prefix('widget')->group(function () {
     Route::post('bootstrap', [BootstrapController::class, 'store']);
     Route::post('chat', [ChatController::class, 'store']);
+    Route::get('sse', [SseController::class, 'stream']);
 });
 
 // Admin routes (Sanctum auth)
