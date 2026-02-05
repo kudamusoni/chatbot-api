@@ -20,6 +20,9 @@ class Conversation extends Model
         'session_token_hash',
         'state',
         'context',
+        'appraisal_answers',
+        'appraisal_current_key',
+        'appraisal_snapshot',
         'last_event_id',
         'last_activity_at',
     ];
@@ -29,6 +32,8 @@ class Conversation extends Model
         return [
             'state' => ConversationState::class,
             'context' => 'array',
+            'appraisal_answers' => 'array',
+            'appraisal_snapshot' => 'array',
             'last_event_id' => 'integer',
             'last_activity_at' => 'datetime',
         ];
@@ -62,10 +67,12 @@ class Conversation extends Model
         $rawToken = self::generateSessionToken();
         $hash = self::hashSessionToken($rawToken);
 
-        $conversation = self::create(array_merge($attributes, [
+        // Defaults come first, then provided attributes can override (except client_id and token)
+        $conversation = self::create(array_merge([
+            'state' => ConversationState::CHAT,
+        ], $attributes, [
             'client_id' => $clientId,
             'session_token_hash' => $hash,
-            'state' => ConversationState::CHAT,
         ]));
 
         return [$conversation, $rawToken];

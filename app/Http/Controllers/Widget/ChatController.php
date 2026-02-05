@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Widget\ChatRequest;
 use App\Models\Conversation;
 use App\Services\ConversationEventRecorder;
+use App\Services\ConversationOrchestrator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -14,7 +15,8 @@ use Illuminate\Support\Str;
 class ChatController extends Controller
 {
     public function __construct(
-        private readonly ConversationEventRecorder $eventRecorder
+        private readonly ConversationEventRecorder $eventRecorder,
+        private readonly ConversationOrchestrator $orchestrator
     ) {}
 
     /**
@@ -55,13 +57,7 @@ class ChatController extends Controller
 
             // Only record assistant message if user message was newly created (not a retry)
             if ($userResult['created']) {
-                $this->eventRecorder->record(
-                    $conversation,
-                    ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                    ['content' => 'Thank you for your message. How can I help you today?'],
-                    idempotencyKey: "{$messageId}:assistant",
-                    correlationId: $correlationId
-                );
+                $this->orchestrator->handleUserMessage($conversation, $userResult['event']);
             }
         });
 

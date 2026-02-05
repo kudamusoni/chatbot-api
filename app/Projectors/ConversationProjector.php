@@ -41,12 +41,16 @@ class ConversationProjector
             ConversationEventType::USER_MESSAGE_CREATED,
             ConversationEventType::ASSISTANT_MESSAGE_CREATED => $this->projectMessage($event),
 
+            ConversationEventType::APPRAISAL_STARTED => $this->projectAppraisalStarted($event),
             ConversationEventType::APPRAISAL_QUESTION_ASKED => $this->projectAppraisalQuestionAsked($event),
+            ConversationEventType::APPRAISAL_ANSWER_RECORDED => $this->projectAppraisalAnswerRecorded($event),
             ConversationEventType::APPRAISAL_CONFIRMATION_REQUESTED => $this->projectAppraisalConfirmationRequested($event),
             ConversationEventType::APPRAISAL_CONFIRMED => $this->projectAppraisalConfirmed($event),
+            ConversationEventType::APPRAISAL_CANCELLED => $this->projectAppraisalCancelled($event),
 
             ConversationEventType::VALUATION_REQUESTED => $this->projectValuationRequested($event),
             ConversationEventType::VALUATION_COMPLETED => $this->projectValuationCompleted($event),
+            ConversationEventType::VALUATION_FAILED => $this->projectValuationFailed($event),
         };
     }
 
@@ -91,17 +95,59 @@ class ConversationProjector
     }
 
     /**
+     * Project appraisal.started - enters APPRAISAL_INTAKE.
+     */
+    protected function projectAppraisalStarted(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if ($conversation) {
+            $conversation->update([
+                'state' => ConversationState::APPRAISAL_INTAKE,
+                'appraisal_answers' => [],
+                'appraisal_current_key' => null,
+                'appraisal_snapshot' => null,
+            ]);
+        }
+    }
+
+    /**
      * Project appraisal.question.asked - enters APPRAISAL_INTAKE.
      */
     protected function projectAppraisalQuestionAsked(ConversationEvent $event): void
     {
         $conversation = Conversation::find($event->conversation_id);
 
-        if ($conversation && $conversation->state === ConversationState::CHAT) {
+        if ($conversation) {
             $conversation->update([
                 'state' => ConversationState::APPRAISAL_INTAKE,
+                'appraisal_current_key' => $event->payload['question_key'] ?? null,
             ]);
         }
+    }
+
+    /**
+     * Project appraisal.answer.recorded - stores answer.
+     */
+    protected function projectAppraisalAnswerRecorded(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        $answers = $conversation->appraisal_answers ?? [];
+        $questionKey = $event->payload['question_key'] ?? null;
+
+        if ($questionKey) {
+            $answers[$questionKey] = $event->payload['value'] ?? null;
+        }
+
+        $conversation->update([
+            'appraisal_answers' => $answers,
+            'appraisal_current_key' => null,
+        ]);
     }
 
     /**
@@ -115,10 +161,8 @@ class ConversationProjector
         if ($conversation) {
             $conversation->update([
                 'state' => ConversationState::APPRAISAL_CONFIRM,
-                'context' => array_merge(
-                    $conversation->context ?? [],
-                    ['appraisal' => $event->payload['appraisal'] ?? []]
-                ),
+                'appraisal_snapshot' => $event->payload['snapshot'] ?? [],
+                'appraisal_current_key' => null,
             ]);
         }
     }
@@ -139,7 +183,25 @@ class ConversationProjector
     }
 
     /**
+     * Project appraisal.cancelled - exits appraisal flow.
+     */
+    protected function projectAppraisalCancelled(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if ($conversation) {
+            $conversation->update([
+                'state' => ConversationState::CHAT,
+                'appraisal_current_key' => null,
+                'appraisal_snapshot' => null,
+            ]);
+        }
+    }
+
+    /**
      * Project a valuation requested event.
+     *
+     * Handles both new structured payload and legacy flat payload formats.
      */
     protected function projectValuationRequested(ConversationEvent $event): void
     {
@@ -154,9 +216,17 @@ class ConversationProjector
             'state' => ConversationState::VALUATION_RUNNING,
         ]);
 
-        // Create or find existing valuation
-        $inputSnapshot = $event->payload;
-        $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
+        // Handle both new structured payload and legacy flat payload
+        if (isset($event->payload['input_snapshot'])) {
+            // New structured format
+            $inputSnapshot = $event->payload['input_snapshot'];
+            $snapshotHash = $event->payload['snapshot_hash']
+                ?? Valuation::generateSnapshotHash($inputSnapshot);
+        } else {
+            // Legacy flat format (payload IS the snapshot)
+            $inputSnapshot = $event->payload;
+            $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
+        }
 
         // Use firstOrCreate to handle idempotency
         Valuation::firstOrCreate(
@@ -175,6 +245,8 @@ class ConversationProjector
 
     /**
      * Project a valuation completed event.
+     *
+     * Finds valuation by snapshot_hash (replay-safe) rather than "latest pending".
      */
     protected function projectValuationCompleted(ConversationEvent $event): void
     {
@@ -189,16 +261,59 @@ class ConversationProjector
             'state' => ConversationState::VALUATION_READY,
         ]);
 
-        // Find and update the valuation
-        // We look for the most recent pending/running valuation for this conversation
-        $valuation = Valuation::where('conversation_id', $event->conversation_id)
-            ->whereIn('status', [ValuationStatus::PENDING, ValuationStatus::RUNNING])
-            ->latest()
-            ->first();
+        // Find valuation by snapshot_hash (replay-safe lookup)
+        $snapshotHash = $event->payload['snapshot_hash'] ?? null;
 
-        if ($valuation) {
+        if (!$snapshotHash) {
+            // Fallback to legacy behavior for old events without snapshot_hash
+            $valuation = Valuation::where('conversation_id', $event->conversation_id)
+                ->whereIn('status', [ValuationStatus::PENDING, ValuationStatus::RUNNING])
+                ->latest()
+                ->first();
+        } else {
+            $valuation = Valuation::where('conversation_id', $event->conversation_id)
+                ->where('snapshot_hash', $snapshotHash)
+                ->first();
+        }
+
+        if ($valuation && !$valuation->status->isTerminal()) {
             $result = $event->payload['result'] ?? [];
             $valuation->markCompleted($result);
+        }
+    }
+
+    /**
+     * Project a valuation failed event.
+     *
+     * Sets conversation to VALUATION_FAILED state so UI can show retry option.
+     */
+    protected function projectValuationFailed(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        // Set to VALUATION_FAILED state - UI can show retry option
+        $conversation->update([
+            'state' => ConversationState::VALUATION_FAILED,
+        ]);
+
+        // Find and update valuation by snapshot_hash
+        $snapshotHash = $event->payload['snapshot_hash'] ?? null;
+
+        if ($snapshotHash) {
+            $valuation = Valuation::where('conversation_id', $event->conversation_id)
+                ->where('snapshot_hash', $snapshotHash)
+                ->first();
+
+            if ($valuation && !$valuation->status->isTerminal()) {
+                $valuation->markFailed([
+                    'error' => $event->payload['error'] ?? 'Unknown error',
+                    'error_code' => $event->payload['error_code'] ?? null,
+                ]);
+            }
         }
     }
 }

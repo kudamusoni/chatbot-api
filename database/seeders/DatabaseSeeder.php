@@ -17,6 +17,7 @@ class DatabaseSeeder extends Seeder
     {
         // Seed clients first
         $this->call(ClientSeeder::class);
+        $this->call(AppraisalQuestionSeeder::class);
 
         // Create test user
         User::factory()->create([

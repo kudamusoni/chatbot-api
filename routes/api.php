@@ -3,9 +3,11 @@
 use App\Http\Controllers\Admin\AuthController;
 use App\Http\Controllers\Admin\ClientController;
 use App\Http\Controllers\Admin\ConversationController;
+use App\Http\Controllers\Widget\AppraisalConfirmController;
 use App\Http\Controllers\Widget\BootstrapController;
 use App\Http\Controllers\Widget\ChatController;
 use App\Http\Controllers\Widget\SseController;
+use App\Http\Controllers\Widget\ValuationRetryController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -17,6 +19,8 @@ Route::get('/user', function (Request $request) {
 Route::prefix('widget')->group(function () {
     Route::post('bootstrap', [BootstrapController::class, 'store']);
     Route::post('chat', [ChatController::class, 'store']);
+    Route::post('appraisal/confirm', [AppraisalConfirmController::class, 'store']);
+    Route::post('valuation/retry', [ValuationRetryController::class, 'store']);
     Route::get('sse', [SseController::class, 'stream']);
 });
 

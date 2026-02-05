@@ -9,6 +9,7 @@ use App\Models\Conversation;
 use App\Models\ConversationMessage;
 use App\Models\Valuation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Tests\Concerns\InteractsWithConversations;
 use Tests\TestCase;
 
@@ -147,7 +148,7 @@ class ProjectionTest extends TestCase
         $result = $this->recordEvent(
             $conversation,
             ConversationEventType::APPRAISAL_QUESTION_ASKED,
-            ['question' => 'What is the item condition?']
+            ['question_key' => 'condition', 'label' => 'What is the item condition?']
         );
 
         $conversation->refresh();
@@ -170,11 +171,12 @@ class ProjectionTest extends TestCase
         $this->recordEvent(
             $conversation,
             ConversationEventType::APPRAISAL_QUESTION_ASKED,
-            ['question' => 'What type of item?']
+            ['question_key' => 'item_type', 'label' => 'What type of item?']
         );
 
         $conversation->refresh();
         $this->assertEquals(ConversationState::APPRAISAL_INTAKE, $conversation->state);
+        $this->assertEquals('item_type', $conversation->appraisal_current_key);
     }
 
     public function test_appraisal_confirmation_requested_transitions_state_and_stores_context(): void
@@ -191,13 +193,13 @@ class ProjectionTest extends TestCase
         $this->recordEvent(
             $conversation,
             ConversationEventType::APPRAISAL_CONFIRMATION_REQUESTED,
-            ['appraisal' => $appraisalData]
+            ['snapshot' => $appraisalData]
         );
 
         $conversation->refresh();
 
         $this->assertEquals(ConversationState::APPRAISAL_CONFIRM, $conversation->state);
-        $this->assertEquals($appraisalData, $conversation->context['appraisal']);
+        $this->assertEquals($appraisalData, $conversation->appraisal_snapshot);
     }
 
     public function test_appraisal_confirmed_transitions_state_to_valuation_running(): void
@@ -223,8 +225,32 @@ class ProjectionTest extends TestCase
         $this->assertEquals(ConversationState::VALUATION_RUNNING, $conversation->state);
     }
 
+    public function test_appraisal_answer_recorded_stores_answer_and_clears_current_key(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'appraisal_current_key' => 'maker',
+        ]);
+
+        $this->recordEvent(
+            $conversation,
+            ConversationEventType::APPRAISAL_ANSWER_RECORDED,
+            [
+                'question_key' => 'maker',
+                'value' => 'Royal Doulton',
+            ]
+        );
+
+        $conversation->refresh();
+        $this->assertEquals(['maker' => 'Royal Doulton'], $conversation->appraisal_answers);
+        $this->assertNull($conversation->appraisal_current_key);
+    }
+
     public function test_valuation_requested_transitions_state_to_running(): void
     {
+        // Fake the bus to prevent RunValuationJob from executing synchronously
+        Bus::fake();
+
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client);
 
@@ -267,6 +293,9 @@ class ProjectionTest extends TestCase
 
     public function test_valuation_requested_creates_valuation_projection(): void
     {
+        // Fake the bus to prevent RunValuationJob from executing synchronously
+        Bus::fake();
+
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client);
 
@@ -293,14 +322,20 @@ class ProjectionTest extends TestCase
 
     public function test_valuation_completed_updates_valuation_status_and_result(): void
     {
+        // Fake the bus to prevent RunValuationJob from executing synchronously
+        Bus::fake();
+
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client);
+
+        $inputData = ['item' => 'antique vase'];
+        $snapshotHash = Valuation::generateSnapshotHash($inputData);
 
         // Request valuation
         $this->recordEvent(
             $conversation,
             ConversationEventType::VALUATION_REQUESTED,
-            ['item' => 'antique vase']
+            $inputData
         );
 
         $valuationResult = [
@@ -309,11 +344,14 @@ class ProjectionTest extends TestCase
             'comparables' => ['similar_vase_1', 'similar_vase_2'],
         ];
 
-        // Complete valuation
+        // Complete valuation (include snapshot_hash for proper lookup)
         $this->recordEvent(
             $conversation,
             ConversationEventType::VALUATION_COMPLETED,
-            ['result' => $valuationResult]
+            [
+                'snapshot_hash' => $snapshotHash,
+                'result' => $valuationResult,
+            ]
         );
 
         $valuation = Valuation::where('conversation_id', $conversation->id)->first();
@@ -478,7 +516,11 @@ class ProjectionTest extends TestCase
         $afterUserMessage = $conversation->last_activity_at;
 
         // Appraisal event
-        $this->recordEvent($conversation, ConversationEventType::APPRAISAL_QUESTION_ASKED, ['q' => 'test']);
+        $this->recordEvent(
+            $conversation,
+            ConversationEventType::APPRAISAL_QUESTION_ASKED,
+            ['question_key' => 'test', 'label' => 'Test question']
+        );
         $conversation->refresh();
         $this->assertTrue($conversation->last_activity_at->greaterThanOrEqualTo($afterUserMessage));
 

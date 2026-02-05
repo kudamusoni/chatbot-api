@@ -24,7 +24,7 @@ class ChatTest extends TestCase
             'client_id' => $client->id,
             'session_token' => $rawToken,
             'message_id' => $messageId,
-            'text' => 'Hello, I have a watch to appraise',
+            'text' => 'Hello there',
         ]);
 
         $response->assertOk()
@@ -53,8 +53,28 @@ class ChatTest extends TestCase
 
         // First message should be user, second should be assistant
         $this->assertSame('user', $messages[0]->role);
-        $this->assertSame('Hello, I have a watch to appraise', $messages[0]->content);
+        $this->assertSame('Hello there', $messages[0]->content);
         $this->assertSame('assistant', $messages[1]->role);
+    }
+
+    public function test_chat_triggers_appraisal_flow_when_intent_detected(): void
+    {
+        $client = $this->makeClient();
+        $this->makeAppraisalQuestion($client, ['key' => 'maker', 'order_index' => 1]);
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) \Illuminate\Support\Str::uuid(),
+            'text' => 'How much is this worth?',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', \App\Enums\ConversationEventType::APPRAISAL_QUESTION_ASKED)
+            ->exists());
     }
 
     public function test_retry_with_same_message_id_does_not_duplicate(): void

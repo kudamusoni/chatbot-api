@@ -3,6 +3,7 @@
 namespace Tests\Concerns;
 
 use App\Enums\ConversationEventType;
+use App\Models\AppraisalQuestion;
 use App\Models\Client;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
@@ -32,6 +33,20 @@ trait InteractsWithConversations
     protected function makeConversation(Client $client, array $attributes = []): array
     {
         return Conversation::createWithToken($client->id, $attributes);
+    }
+
+    protected function makeAppraisalQuestion(Client $client, array $attributes = []): AppraisalQuestion
+    {
+        return AppraisalQuestion::create(array_merge([
+            'client_id' => $client->id,
+            'key' => 'maker_' . uniqid(),
+            'label' => 'Who is the maker?',
+            'help_text' => null,
+            'input_type' => 'text',
+            'required' => true,
+            'order_index' => 1,
+            'options' => null,
+        ], $attributes));
     }
 
     protected function getEventRecorder(): ConversationEventRecorder
