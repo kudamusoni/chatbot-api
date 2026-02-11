@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\ConversationController;
 use App\Http\Controllers\Widget\AppraisalConfirmController;
 use App\Http\Controllers\Widget\BootstrapController;
 use App\Http\Controllers\Widget\ChatController;
+use App\Http\Controllers\Widget\HistoryController;
 use App\Http\Controllers\Widget\SseController;
 use App\Http\Controllers\Widget\ValuationRetryController;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ Route::prefix('widget')->group(function () {
     Route::post('chat', [ChatController::class, 'store']);
     Route::post('appraisal/confirm', [AppraisalConfirmController::class, 'store']);
     Route::post('valuation/retry', [ValuationRetryController::class, 'store']);
+    Route::get('history', [HistoryController::class, 'index']);
     Route::get('sse', [SseController::class, 'stream']);
 });
 

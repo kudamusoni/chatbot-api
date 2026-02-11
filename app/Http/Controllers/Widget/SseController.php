@@ -174,6 +174,9 @@ class SseController extends Controller
             $this->sendReplayLimitError($lastSentId);
         }
 
+        // Signal that replay is complete (stream-only marker, not stored)
+        $this->sendReplayComplete($conversationId, $lastSentId);
+
         return $lastSentId;
     }
 
@@ -258,6 +261,21 @@ class SseController extends Controller
             'code' => 'REPLAY_LIMIT',
             'message' => 'Too many events to replay. Reconnect with new cursor.',
             'last_sent_id' => $lastSentId,
+        ]) . "\n\n");
+    }
+
+    /**
+     * Send replay complete signal.
+     *
+     * This is a stream-only marker (not stored in conversation_events).
+     * The widget can treat this as "initial state is now fully reconstructed; we are live".
+     */
+    private function sendReplayComplete(string $conversationId, int $lastEventId): void
+    {
+        $this->output("event: conversation.replay.complete\n");
+        $this->output("data: " . json_encode([
+            'conversation_id' => $conversationId,
+            'last_event_id' => $lastEventId,
         ]) . "\n\n");
     }
 

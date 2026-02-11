@@ -356,4 +356,103 @@ class SseTest extends TestCase
         // Should contain retry directive (2000ms)
         $this->assertStringContainsString('retry: 2000', $content);
     }
+
+    // =========================================================================
+    // Replay Complete Signal Tests
+    // =========================================================================
+
+    public function test_emits_replay_complete_after_replay(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        // Create some events
+        $result1 = $this->recordUserMessage($conversation, 'Hello');
+        $result2 = $this->recordAssistantMessage($conversation, 'Hi there!');
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'once' => '1',
+        ]));
+
+        $response->assertOk();
+
+        $content = $response->getContent();
+
+        // Should contain replay complete event
+        $this->assertStringContainsString('event: conversation.replay.complete', $content);
+
+        // Extract replay complete data
+        preg_match('/event: conversation\.replay\.complete\ndata: ({.*})/m', $content, $matches);
+        $this->assertNotEmpty($matches, 'Should have replay complete data');
+
+        $replayComplete = json_decode($matches[1], true);
+
+        // Verify replay complete structure
+        $this->assertArrayHasKey('conversation_id', $replayComplete);
+        $this->assertArrayHasKey('last_event_id', $replayComplete);
+        $this->assertSame($conversation->id, $replayComplete['conversation_id']);
+        $this->assertSame($result2['event']->id, $replayComplete['last_event_id']);
+    }
+
+    public function test_replay_complete_emitted_even_with_no_events(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        // No events created
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'once' => '1',
+        ]));
+
+        $response->assertOk();
+
+        $content = $response->getContent();
+
+        // Should still contain replay complete event
+        $this->assertStringContainsString('event: conversation.replay.complete', $content);
+
+        // Extract replay complete data
+        preg_match('/event: conversation\.replay\.complete\ndata: ({.*})/m', $content, $matches);
+        $this->assertNotEmpty($matches, 'Should have replay complete data');
+
+        $replayComplete = json_decode($matches[1], true);
+
+        // last_event_id should be 0 (cursor default)
+        $this->assertSame(0, $replayComplete['last_event_id']);
+    }
+
+    public function test_replay_complete_reflects_cursor_position(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        // Create events
+        $result1 = $this->recordUserMessage($conversation, 'First');
+        $result2 = $this->recordAssistantMessage($conversation, 'Second');
+        $result3 = $this->recordUserMessage($conversation, 'Third');
+
+        // Request events after the second one
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'after_id' => $result2['event']->id,
+            'once' => '1',
+        ]));
+
+        $response->assertOk();
+
+        $content = $response->getContent();
+
+        // Extract replay complete data
+        preg_match('/event: conversation\.replay\.complete\ndata: ({.*})/m', $content, $matches);
+        $replayComplete = json_decode($matches[1], true);
+
+        // last_event_id should be the third event (last replayed)
+        $this->assertSame($result3['event']->id, $replayComplete['last_event_id']);
+    }
 }
