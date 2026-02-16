@@ -30,6 +30,14 @@ enum ConversationEventType: string
     case VALUATION_COMPLETED = 'valuation.completed';
     case VALUATION_FAILED = 'valuation.failed';
 
+    // Leads flow
+    case LEAD_STARTED = 'lead.started';
+    case LEAD_IDENTITY_CONFIRMATION_REQUESTED = 'lead.identity.confirmation.requested';
+    case LEAD_IDENTITY_DECISION_RECORDED = 'lead.identity.decision.recorded';
+    case LEAD_QUESTION_ASKED = 'lead.question.asked';
+    case LEAD_ANSWER_RECORDED = 'lead.answer.recorded';
+    case LEAD_REQUESTED = 'lead.requested';
+
     /**
      * Check if this event type produces a message projection.
      */

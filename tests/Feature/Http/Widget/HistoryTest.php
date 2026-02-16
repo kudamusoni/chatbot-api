@@ -75,6 +75,9 @@ class HistoryTest extends TestCase
                 'state' => 'CHAT',
                 'appraisal_current_key' => null,
                 'appraisal_snapshot' => null,
+                'lead_current_key' => null,
+                'lead_answers' => null,
+                'lead_identity_candidate' => null,
                 'valuation' => null,
             ]);
     }
@@ -171,7 +174,39 @@ class HistoryTest extends TestCase
                 'state' => 'CHAT',
                 'appraisal_current_key' => null,
                 'appraisal_snapshot' => null,
+                'lead_current_key' => null,
+                'lead_answers' => null,
+                'lead_identity_candidate' => null,
                 'valuation' => null,
+            ]);
+    }
+
+    public function test_returns_lead_identity_confirm_state_with_candidate(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_IDENTITY_CONFIRM,
+            'lead_identity_candidate' => [
+                'previous_lead_id' => '019c63da-6b58-7225-8623-471b9ab8ddc5',
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+                'phone_raw' => '+1 (202) 555-0110',
+                'phone_normalized' => '+12025550110',
+            ],
+        ]);
+
+        $response = $this->getJson('/api/widget/history?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+        ]));
+
+        $response->assertOk()
+            ->assertJson([
+                'state' => 'LEAD_IDENTITY_CONFIRM',
+                'lead_identity_candidate' => [
+                    'name' => 'Jane Doe',
+                    'email' => 'jane@example.com',
+                ],
             ]);
     }
 
@@ -295,6 +330,28 @@ class HistoryTest extends TestCase
                     'status' => 'FAILED',
                     'result' => ['error' => 'Service unavailable'],
                 ],
+            ]);
+    }
+
+    public function test_returns_lead_intake_fields(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_INTAKE,
+            'lead_current_key' => 'email',
+            'lead_answers' => ['name' => 'Jane Doe'],
+        ]);
+
+        $response = $this->getJson('/api/widget/history?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+        ]));
+
+        $response->assertOk()
+            ->assertJson([
+                'state' => 'LEAD_INTAKE',
+                'lead_current_key' => 'email',
+                'lead_answers' => ['name' => 'Jane Doe'],
             ]);
     }
 

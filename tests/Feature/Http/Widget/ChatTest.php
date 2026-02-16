@@ -2,8 +2,11 @@
 
 namespace Tests\Feature\Http\Widget;
 
+use App\Enums\ConversationState;
+use App\Enums\ConversationEventType;
 use App\Models\ConversationEvent;
 use App\Models\ConversationMessage;
+use App\Models\Lead;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\Concerns\InteractsWithConversations;
@@ -73,8 +76,183 @@ class ChatTest extends TestCase
         $response->assertOk();
 
         $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
-            ->where('type', \App\Enums\ConversationEventType::APPRAISAL_QUESTION_ASKED)
+            ->where('type', ConversationEventType::APPRAISAL_QUESTION_ASKED)
             ->exists());
+    }
+
+    public function test_chat_triggers_lead_intake_from_valuation_ready(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_READY,
+        ]);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) Str::uuid(),
+            'text' => 'Please request an expert manual review for this item.',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_STARTED)
+            ->exists());
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_QUESTION_ASKED)
+            ->where('payload->question_key', 'name')
+            ->exists());
+    }
+
+    public function test_chat_triggers_lead_intake_from_loose_phrase(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_READY,
+        ]);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) Str::uuid(),
+            'text' => 'Can someone from your team follow up to review this item?',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_STARTED)
+            ->exists());
+    }
+
+    public function test_chat_requests_lead_identity_confirmation_when_previous_lead_exists(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_READY,
+        ]);
+
+        Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'phone_raw' => '+1 (202) 555-0110',
+            'phone_normalized' => '+12025550110',
+            'status' => 'REQUESTED',
+        ]);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) Str::uuid(),
+            'text' => 'Please request an expert manual review for this item.',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED)
+            ->exists());
+        $this->assertFalse(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_STARTED)
+            ->exists());
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::LEAD_IDENTITY_CONFIRM, $conversation->state);
+    }
+
+    public function test_chat_completes_lead_intake_and_creates_request(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_INTAKE,
+            'lead_current_key' => 'phone',
+            'lead_answers' => [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+            ],
+        ]);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) Str::uuid(),
+            'text' => '+1 (202) 555-0110',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_REQUESTED)
+            ->exists());
+
+        $this->assertSame(
+            1,
+            Lead::where('conversation_id', $conversation->id)->count()
+        );
+
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+            ->where('payload->content', 'Do you have any other questions?')
+            ->exists());
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::CHAT, $conversation->state);
+    }
+
+    public function test_chat_reprompts_for_invalid_lead_email(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_INTAKE,
+            'lead_current_key' => 'email',
+            'lead_answers' => [
+                'name' => 'Jane Doe',
+            ],
+        ]);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) Str::uuid(),
+            'text' => 'not-an-email',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertFalse(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_ANSWER_RECORDED)
+            ->exists());
+        $this->assertFalse(Lead::where('conversation_id', $conversation->id)->exists());
+    }
+
+    public function test_chat_reprompts_for_invalid_lead_phone(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_INTAKE,
+            'lead_current_key' => 'phone',
+            'lead_answers' => [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+            ],
+        ]);
+
+        $response = $this->postJson('/api/widget/chat', [
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'message_id' => (string) Str::uuid(),
+            'text' => '12',
+        ]);
+
+        $response->assertOk();
+
+        $this->assertFalse(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::LEAD_REQUESTED)
+            ->exists());
+        $this->assertFalse(Lead::where('conversation_id', $conversation->id)->exists());
     }
 
     public function test_retry_with_same_message_id_does_not_duplicate(): void

@@ -7,6 +7,7 @@ use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
 use App\Models\Conversation;
 use App\Models\ConversationMessage;
+use App\Models\Lead;
 use App\Models\Valuation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -285,6 +286,94 @@ class ProjectionTest extends TestCase
 
         $conversation->refresh();
         $this->assertEquals(ConversationState::VALUATION_READY, $conversation->state);
+    }
+
+    public function test_lead_requested_creates_lead_and_returns_chat_state(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_INTAKE,
+            'lead_current_key' => 'phone',
+            'lead_answers' => [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+            ],
+            'lead_identity_candidate' => [
+                'name' => 'Old Name',
+                'email' => 'old@example.com',
+                'phone_raw' => '+1 202 555 0199',
+                'phone_normalized' => '+12025550199',
+            ],
+        ]);
+
+        $result = $this->recordEvent(
+            $conversation,
+            ConversationEventType::LEAD_REQUESTED,
+            [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+                'phone_raw' => '(202) 555-0110',
+                'phone_normalized' => '2025550110',
+            ]
+        );
+
+        $request = Lead::where('conversation_id', $conversation->id)->first();
+        $this->assertNotNull($request);
+        $this->assertSame($result['event']->id, $request->request_event_id);
+        $this->assertSame('Jane Doe', $request->name);
+        $this->assertSame('jane@example.com', $request->email);
+
+        $conversation->refresh();
+        $this->assertEquals(ConversationState::CHAT, $conversation->state);
+        $this->assertNull($conversation->lead_current_key);
+        $this->assertNull($conversation->lead_answers);
+        $this->assertNull($conversation->lead_identity_candidate);
+    }
+
+    public function test_lead_identity_confirmation_requested_transitions_state_and_sets_candidate(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client);
+
+        $this->recordEvent(
+            $conversation,
+            ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED,
+            [
+                'previous_lead_id' => '019c63da-6b58-7225-8623-471b9ab8ddc5',
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+                'phone_raw' => '+1 (202) 555-0110',
+                'phone_normalized' => '+12025550110',
+            ]
+        );
+
+        $conversation->refresh();
+        $this->assertEquals(ConversationState::LEAD_IDENTITY_CONFIRM, $conversation->state);
+        $this->assertSame('Jane Doe', $conversation->lead_identity_candidate['name']);
+        $this->assertSame('jane@example.com', $conversation->lead_identity_candidate['email']);
+    }
+
+    public function test_lead_identity_decision_recorded_with_decline_clears_candidate(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_IDENTITY_CONFIRM,
+            'lead_identity_candidate' => [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+                'phone_raw' => '+1 (202) 555-0110',
+                'phone_normalized' => '+12025550110',
+            ],
+        ]);
+
+        $this->recordEvent(
+            $conversation,
+            ConversationEventType::LEAD_IDENTITY_DECISION_RECORDED,
+            ['use_existing' => false]
+        );
+
+        $conversation->refresh();
+        $this->assertNull($conversation->lead_identity_candidate);
     }
 
     // =========================================================================

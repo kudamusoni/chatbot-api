@@ -83,6 +83,59 @@ class AppraisalConfirmTest extends TestCase
         $this->assertSame(1, Valuation::where('conversation_id', $conversation->id)->count());
     }
 
+    public function test_confirm_reemits_completed_when_same_snapshot_already_terminal(): void
+    {
+        $client = $this->makeClient();
+        $snapshot = [
+            'maker' => 'Rolex',
+            'age' => '1970',
+        ];
+        $snapshotHash = Valuation::generateSnapshotHash($snapshot);
+        [$conversation, $token] = $this->makeConversation($client, [
+            'state' => ConversationState::APPRAISAL_CONFIRM,
+            'appraisal_snapshot' => $snapshot,
+        ]);
+
+        ConversationEvent::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'type' => ConversationEventType::VALUATION_REQUESTED,
+            'payload' => [
+                'snapshot_hash' => $snapshotHash,
+                'input_snapshot' => $snapshot,
+            ],
+            'correlation_id' => (string) Str::uuid(),
+            'idempotency_key' => $snapshotHash,
+        ]);
+
+        Valuation::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'status' => \App\Enums\ValuationStatus::COMPLETED,
+            'snapshot_hash' => $snapshotHash,
+            'input_snapshot' => $snapshot,
+            'result' => ['count' => 5, 'median' => 5000, 'confidence' => 0.8],
+        ]);
+
+        $actionId = (string) Str::uuid();
+
+        $response = $this->postJson('/api/widget/appraisal/confirm', [
+            'client_id' => $client->id,
+            'session_token' => $token,
+            'action_id' => $actionId,
+            'confirm' => true,
+        ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::VALUATION_COMPLETED)
+                ->where('payload->snapshot_hash', $snapshotHash)
+                ->exists()
+        );
+    }
+
     public function test_token_from_other_client_is_rejected(): void
     {
         $clientA = $this->makeClient(['name' => 'Client A']);
@@ -147,6 +200,12 @@ class AppraisalConfirmTest extends TestCase
                 ->where('type', ConversationEventType::VALUATION_REQUESTED)
                 ->exists()
         );
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+                ->where('payload->content', 'Is there anything else that you needed info about?')
+                ->exists()
+        );
 
         // State should return to CHAT
         $conversation->refresh();
@@ -188,6 +247,10 @@ class AppraisalConfirmTest extends TestCase
         // Should only have 1 APPRAISAL_CANCELLED event
         $this->assertSame(1, ConversationEvent::where('conversation_id', $conversation->id)
             ->where('type', ConversationEventType::APPRAISAL_CANCELLED)
+            ->count());
+        $this->assertSame(1, ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+            ->where('payload->content', 'Is there anything else that you needed info about?')
             ->count());
     }
 

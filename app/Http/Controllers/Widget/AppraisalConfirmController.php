@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Widget;
 
 use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
+use App\Enums\ValuationStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Widget\AppraisalConfirmRequest;
 use App\Models\Conversation;
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 class AppraisalConfirmController extends Controller
 {
+    private const CANCELLATION_FOLLOW_UP_MESSAGE = 'Is there anything else that you needed info about?';
+
     public function __construct(
         private readonly ConversationEventRecorder $eventRecorder
     ) {}
@@ -75,7 +78,7 @@ class AppraisalConfirmController extends Controller
                 $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
 
                 // Emit valuation.requested with structured payload
-                $this->eventRecorder->record(
+                $requested = $this->eventRecorder->record(
                     $conversation,
                     ConversationEventType::VALUATION_REQUESTED,
                     [
@@ -86,6 +89,42 @@ class AppraisalConfirmController extends Controller
                     idempotencyKey: $snapshotHash,
                     correlationId: $actionId
                 );
+
+                if (!$requested['created']) {
+                    $valuation = Valuation::where('conversation_id', $conversation->id)
+                        ->where('snapshot_hash', $snapshotHash)
+                        ->first();
+
+                    if ($valuation?->status === ValuationStatus::COMPLETED) {
+                        $this->eventRecorder->record(
+                            $conversation,
+                            ConversationEventType::VALUATION_COMPLETED,
+                            [
+                                'snapshot_hash' => $snapshotHash,
+                                'status' => 'COMPLETED',
+                                'result' => $valuation->result ?? [],
+                            ],
+                            idempotencyKey: "val:{$snapshotHash}:reemit:completed:{$actionId}",
+                            correlationId: $actionId
+                        );
+                    }
+
+                    if ($valuation?->status === ValuationStatus::FAILED) {
+                        $failure = is_array($valuation->result) ? $valuation->result : [];
+
+                        $this->eventRecorder->record(
+                            $conversation,
+                            ConversationEventType::VALUATION_FAILED,
+                            [
+                                'snapshot_hash' => $snapshotHash,
+                                'error' => $failure['error'] ?? 'Valuation failed',
+                                'error_code' => $failure['error_code'] ?? 'COMPUTATION_ERROR',
+                            ],
+                            idempotencyKey: "val:{$snapshotHash}:reemit:failed:{$actionId}",
+                            correlationId: $actionId
+                        );
+                    }
+                }
 
                 return;
             }
@@ -98,6 +137,14 @@ class AppraisalConfirmController extends Controller
                     'source_message_event_id' => null,
                 ],
                 idempotencyKey: $actionId,
+                correlationId: $actionId
+            );
+
+            $this->eventRecorder->record(
+                $conversation,
+                ConversationEventType::ASSISTANT_MESSAGE_CREATED,
+                ['content' => self::CANCELLATION_FOLLOW_UP_MESSAGE],
+                idempotencyKey: "{$actionId}:assistant.followup",
                 correlationId: $actionId
             );
         });

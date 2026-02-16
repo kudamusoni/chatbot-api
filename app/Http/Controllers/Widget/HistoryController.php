@@ -81,6 +81,9 @@ class HistoryController extends Controller
             'state' => $conversation->state->value,
             'appraisal_current_key' => $conversation->appraisal_current_key,
             'appraisal_snapshot' => $conversation->appraisal_snapshot,
+            'lead_current_key' => $conversation->lead_current_key,
+            'lead_answers' => $conversation->lead_answers,
+            'lead_identity_candidate' => $conversation->lead_identity_candidate,
             'valuation' => $valuation ? [
                 'status' => $valuation->status->value,
                 'result' => $valuation->result,

@@ -5,6 +5,7 @@ namespace Tests\Feature\Domain;
 use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Models\ConversationEvent;
+use App\Models\Lead;
 use App\Services\ConversationEventRecorder;
 use App\Services\ConversationOrchestrator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -100,5 +101,167 @@ class OrchestratorTest extends TestCase
             'maker' => 'Royal Doulton',
             'age' => 'circa 1950',
         ], $confirmationEvent->payload['snapshot']);
+    }
+
+    public function test_starts_lead_when_requested_from_valuation_ready(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_READY,
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'Please request an expert manual review for this item.'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $events = ConversationEvent::where('conversation_id', $conversation->id)
+            ->orderBy('id')
+            ->get();
+
+        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::LEAD_STARTED));
+        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::LEAD_QUESTION_ASKED));
+        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::ASSISTANT_MESSAGE_CREATED));
+    }
+
+    public function test_requests_lead_identity_confirmation_when_latest_lead_exists(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_READY,
+        ]);
+
+        Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'phone_raw' => '+1 (202) 555-0110',
+            'phone_normalized' => '+12025550110',
+            'status' => 'REQUESTED',
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'Please request an expert manual review for this item.'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED)
+                ->exists()
+        );
+        $this->assertFalse(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::LEAD_STARTED)
+                ->exists()
+        );
+    }
+
+    public function test_starts_lead_with_loose_intent_phrase_from_valuation_ready(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_READY,
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'Can a specialist contact me to review this?'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::LEAD_STARTED)
+                ->exists()
+        );
+    }
+
+    public function test_lead_is_rejected_outside_valuation_ready(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_FAILED,
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'I want a lead.'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $this->assertFalse(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::LEAD_STARTED)
+                ->exists()
+        );
+
+        $assistantEvents = ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+            ->orderBy('id')
+            ->get();
+
+        $this->assertCount(2, $assistantEvents);
+        $this->assertSame(
+            'Lead capture is available after your valuation result is ready.',
+            $assistantEvents[0]->payload['content']
+        );
+        $this->assertSame(
+            'Do you have any more questions?',
+            $assistantEvents[1]->payload['content']
+        );
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::CHAT, $conversation->state);
+    }
+
+    public function test_lead_identity_confirm_state_requires_panel_decision(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_IDENTITY_CONFIRM,
+            'lead_identity_candidate' => [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+                'phone_raw' => '+1 (202) 555-0110',
+                'phone_normalized' => '+12025550110',
+            ],
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'yes'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+                ->where('payload->content', 'Please use the Yes or No buttons to confirm your contact details.')
+                ->exists()
+        );
     }
 }

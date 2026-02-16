@@ -23,6 +23,9 @@ class Conversation extends Model
         'appraisal_answers',
         'appraisal_current_key',
         'appraisal_snapshot',
+        'lead_answers',
+        'lead_current_key',
+        'lead_identity_candidate',
         'last_event_id',
         'last_activity_at',
     ];
@@ -34,6 +37,8 @@ class Conversation extends Model
             'context' => 'array',
             'appraisal_answers' => 'array',
             'appraisal_snapshot' => 'array',
+            'lead_answers' => 'array',
+            'lead_identity_candidate' => 'array',
             'last_event_id' => 'integer',
             'last_activity_at' => 'datetime',
         ];
@@ -155,6 +160,14 @@ class Conversation extends Model
     public function valuations(): HasMany
     {
         return $this->hasMany(Valuation::class);
+    }
+
+    /**
+     * Get all leads for this conversation.
+     */
+    public function leads(): HasMany
+    {
+        return $this->hasMany(Lead::class);
     }
 
     /**

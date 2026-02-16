@@ -120,16 +120,14 @@ class ValuationEngine
     private function extractSearchTerms(array $snapshot): array
     {
         $terms = [];
+        $values = $this->flattenSnapshotValues($snapshot);
 
-        // Fields to extract terms from (prioritized)
-        $searchableFields = ['maker', 'material', 'title', 'description', 'type', 'style'];
+        foreach ($values as $rawValue) {
+            $value = strtolower(trim($rawValue));
 
-        foreach ($searchableFields as $field) {
-            if (!isset($snapshot[$field]) || $snapshot[$field] === '') {
+            if ($value === '') {
                 continue;
             }
-
-            $value = strtolower(trim($snapshot[$field]));
 
             // Split into words
             $words = preg_split('/[\s,;.\-_]+/', $value, -1, PREG_SPLIT_NO_EMPTY);
@@ -146,6 +144,32 @@ class ValuationEngine
 
         // Deduplicate and limit to top 5 terms
         return array_slice(array_unique($terms), 0, 5);
+    }
+
+    /**
+     * Flatten snapshot values into searchable strings.
+     *
+     * This allows matching on any client-defined appraisal keys,
+     * not only a predefined set of known fields.
+     *
+     * @return list<string>
+     */
+    private function flattenSnapshotValues(array $snapshot): array
+    {
+        $values = [];
+
+        foreach ($snapshot as $value) {
+            if (is_array($value)) {
+                $values = array_merge($values, $this->flattenSnapshotValues($value));
+                continue;
+            }
+
+            if (is_string($value) || is_int($value) || is_float($value)) {
+                $values[] = (string) $value;
+            }
+        }
+
+        return $values;
     }
 
     /**

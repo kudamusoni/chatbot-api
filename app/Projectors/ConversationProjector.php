@@ -9,6 +9,7 @@ use App\Events\Conversation\ConversationEventRecorded;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\ConversationMessage;
+use App\Models\Lead;
 use App\Models\Valuation;
 
 /**
@@ -47,6 +48,13 @@ class ConversationProjector
             ConversationEventType::APPRAISAL_CONFIRMATION_REQUESTED => $this->projectAppraisalConfirmationRequested($event),
             ConversationEventType::APPRAISAL_CONFIRMED => $this->projectAppraisalConfirmed($event),
             ConversationEventType::APPRAISAL_CANCELLED => $this->projectAppraisalCancelled($event),
+
+            ConversationEventType::LEAD_STARTED => $this->projectLeadStarted($event),
+            ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED => $this->projectLeadIdentityConfirmationRequested($event),
+            ConversationEventType::LEAD_IDENTITY_DECISION_RECORDED => $this->projectLeadIdentityDecisionRecorded($event),
+            ConversationEventType::LEAD_QUESTION_ASKED => $this->projectLeadQuestionAsked($event),
+            ConversationEventType::LEAD_ANSWER_RECORDED => $this->projectLeadAnswerRecorded($event),
+            ConversationEventType::LEAD_REQUESTED => $this->projectLeadRequested($event),
 
             ConversationEventType::VALUATION_REQUESTED => $this->projectValuationRequested($event),
             ConversationEventType::VALUATION_COMPLETED => $this->projectValuationCompleted($event),
@@ -196,6 +204,139 @@ class ConversationProjector
                 'appraisal_snapshot' => null,
             ]);
         }
+    }
+
+    /**
+     * Project lead.started - enters leads intake.
+     */
+    protected function projectLeadStarted(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if ($conversation) {
+            $conversation->update([
+                'state' => ConversationState::LEAD_INTAKE,
+                'lead_answers' => [],
+                'lead_current_key' => null,
+                'lead_identity_candidate' => null,
+            ]);
+        }
+    }
+
+    /**
+     * Project lead.identity.confirmation.requested - enters identity confirmation state.
+     */
+    protected function projectLeadIdentityConfirmationRequested(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if ($conversation) {
+            $conversation->update([
+                'state' => ConversationState::LEAD_IDENTITY_CONFIRM,
+                'lead_identity_candidate' => [
+                    'previous_lead_id' => $event->payload['previous_lead_id'] ?? null,
+                    'name' => $event->payload['name'] ?? null,
+                    'email' => $event->payload['email'] ?? null,
+                    'phone_raw' => $event->payload['phone_raw'] ?? null,
+                    'phone_normalized' => $event->payload['phone_normalized'] ?? null,
+                ],
+                'lead_answers' => null,
+                'lead_current_key' => null,
+            ]);
+        }
+    }
+
+    /**
+     * Project lead.identity.decision.recorded.
+     */
+    protected function projectLeadIdentityDecisionRecorded(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        $useExisting = (bool) ($event->payload['use_existing'] ?? false);
+
+        if ($useExisting) {
+            return;
+        }
+
+        $conversation->update([
+            'lead_identity_candidate' => null,
+        ]);
+    }
+
+    /**
+     * Project lead.question.asked - tracks active question.
+     */
+    protected function projectLeadQuestionAsked(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if ($conversation) {
+            $conversation->update([
+                'state' => ConversationState::LEAD_INTAKE,
+                'lead_current_key' => $event->payload['question_key'] ?? null,
+            ]);
+        }
+    }
+
+    /**
+     * Project lead.answer.recorded - stores answer.
+     */
+    protected function projectLeadAnswerRecorded(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        $answers = $conversation->lead_answers ?? [];
+        $questionKey = $event->payload['question_key'] ?? null;
+
+        if ($questionKey) {
+            $answers[$questionKey] = $event->payload['value'] ?? null;
+        }
+
+        $conversation->update([
+            'lead_answers' => $answers,
+            'lead_current_key' => null,
+        ]);
+    }
+
+    /**
+     * Project lead.requested - create request row and return to chat.
+     */
+    protected function projectLeadRequested(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        Lead::firstOrCreate(
+            ['request_event_id' => $event->id],
+            [
+                'conversation_id' => $event->conversation_id,
+                'client_id' => $event->client_id,
+                'name' => $event->payload['name'] ?? '',
+                'email' => $event->payload['email'] ?? '',
+                'phone_raw' => $event->payload['phone_raw'] ?? '',
+                'phone_normalized' => $event->payload['phone_normalized'] ?? '',
+                'status' => 'REQUESTED',
+            ]
+        );
+
+        $conversation->update([
+            'state' => ConversationState::CHAT,
+            'lead_current_key' => null,
+            'lead_answers' => null,
+            'lead_identity_candidate' => null,
+        ]);
     }
 
     /**

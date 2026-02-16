@@ -66,4 +66,12 @@ class Client extends Model
     {
         return $this->hasMany(Valuation::class);
     }
+
+    /**
+     * Get all leads for this client.
+     */
+    public function leads(): HasMany
+    {
+        return $this->hasMany(Lead::class);
+    }
 }

@@ -278,6 +278,24 @@ class ValuationEngineTest extends TestCase
         $this->assertEquals('internal', $result['data_quality']);
     }
 
+    public function test_matches_using_any_snapshot_keys_not_just_predefined_fields(): void
+    {
+        $this->createComp([
+            'title' => 'Royal Doulton Tea Set - Bunnykins',
+            'description' => 'Children tea set in excellent condition',
+            'price' => 12000,
+            'source' => ProductSource::SOLD,
+        ]);
+
+        $result = $this->engine->compute($this->client->id, [
+            'item_type' => 'Royal Doulton Tea Set',
+            'condition' => 'New',
+        ]);
+
+        $this->assertSame(1, $result['count']);
+        $this->assertSame(12000, $result['median']);
+    }
+
     public function test_matched_comps_sample_returns_up_to_five_items(): void
     {
         // Create 7 items
