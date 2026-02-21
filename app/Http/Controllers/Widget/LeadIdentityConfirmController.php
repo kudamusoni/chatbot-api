@@ -10,13 +10,15 @@ use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Services\ConversationEventRecorder;
 use App\Services\ConversationOrchestrator;
+use App\Services\TurnLifecycleRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
 class LeadIdentityConfirmController extends Controller
 {
     public function __construct(
-        private readonly ConversationEventRecorder $eventRecorder
+        private readonly ConversationEventRecorder $eventRecorder,
+        private readonly TurnLifecycleRecorder $turnLifecycle
     ) {}
 
     /**
@@ -68,88 +70,100 @@ class LeadIdentityConfirmController extends Controller
             ], 409);
         }
 
-        DB::transaction(function () use ($conversation, $actionId, $useExisting, $candidate) {
-            $this->eventRecorder->record(
-                $conversation,
-                ConversationEventType::LEAD_IDENTITY_DECISION_RECORDED,
-                [
-                    'use_existing' => $useExisting,
-                    'previous_lead_id' => $candidate['previous_lead_id'] ?? null,
-                ],
-                idempotencyKey: $actionId,
-                correlationId: $actionId
-            );
+        $startedAt = microtime(true);
+        $this->turnLifecycle->recordStarted($conversation, $actionId, 'lead.confirm_identity');
 
-            if ($useExisting) {
+        try {
+            DB::transaction(function () use ($conversation, $actionId, $useExisting, $candidate) {
                 $this->eventRecorder->record(
                     $conversation,
-                    ConversationEventType::LEAD_REQUESTED,
+                    ConversationEventType::LEAD_IDENTITY_DECISION_RECORDED,
                     [
-                        'name' => $candidate['name'],
-                        'email' => $candidate['email'],
-                        'phone_raw' => $candidate['phone_raw'],
-                        'phone_normalized' => $candidate['phone_normalized'],
+                        'use_existing' => $useExisting,
                         'previous_lead_id' => $candidate['previous_lead_id'] ?? null,
-                        'source' => 'reused_previous_lead',
                     ],
-                    idempotencyKey: "{$actionId}:lead.requested",
+                    idempotencyKey: $actionId,
                     correlationId: $actionId
                 );
 
-                $messages = ConversationOrchestrator::leadSubmissionAssistantMessages();
+                if ($useExisting) {
+                    $this->eventRecorder->record(
+                        $conversation,
+                        ConversationEventType::LEAD_REQUESTED,
+                        [
+                            'name' => $candidate['name'],
+                            'email' => $candidate['email'],
+                            'phone_raw' => $candidate['phone_raw'],
+                            'phone_normalized' => $candidate['phone_normalized'],
+                            'previous_lead_id' => $candidate['previous_lead_id'] ?? null,
+                            'source' => 'reused_previous_lead',
+                        ],
+                        idempotencyKey: "{$actionId}:lead.requested",
+                        correlationId: $actionId
+                    );
+
+                    $messages = ConversationOrchestrator::leadSubmissionAssistantMessages();
+
+                    $this->eventRecorder->record(
+                        $conversation,
+                        ConversationEventType::ASSISTANT_MESSAGE_CREATED,
+                        ['content' => $messages[0]],
+                        idempotencyKey: "{$actionId}:assistant.lead.confirmed",
+                        correlationId: $actionId
+                    );
+                    $this->eventRecorder->record(
+                        $conversation,
+                        ConversationEventType::ASSISTANT_MESSAGE_CREATED,
+                        ['content' => $messages[1]],
+                        idempotencyKey: "{$actionId}:assistant.lead.confirmed.followup",
+                        correlationId: $actionId
+                    );
+
+                    return;
+                }
 
                 $this->eventRecorder->record(
                     $conversation,
-                    ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                    ['content' => $messages[0]],
-                    idempotencyKey: "{$actionId}:assistant.lead.confirmed",
+                    ConversationEventType::LEAD_STARTED,
+                    [
+                        'reason' => 'lead_identity_declined',
+                        'source' => 'identity_confirmation',
+                        'previous_lead_id' => $candidate['previous_lead_id'] ?? null,
+                    ],
+                    idempotencyKey: "{$actionId}:lead.started",
+                    correlationId: $actionId
+                );
+
+                $namePrompt = ConversationOrchestrator::leadPromptForQuestion('name')
+                    ?? 'Great, please share your full name.';
+
+                $this->eventRecorder->record(
+                    $conversation,
+                    ConversationEventType::LEAD_QUESTION_ASKED,
+                    [
+                        'question_key' => 'name',
+                        'label' => $namePrompt,
+                        'required' => true,
+                    ],
+                    idempotencyKey: "{$actionId}:lead.question.name",
                     correlationId: $actionId
                 );
                 $this->eventRecorder->record(
                     $conversation,
                     ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                    ['content' => $messages[1]],
-                    idempotencyKey: "{$actionId}:assistant.lead.confirmed.followup",
+                    ['content' => $namePrompt],
+                    idempotencyKey: "{$actionId}:assistant.lead.question.name",
                     correlationId: $actionId
                 );
+            });
 
-                return;
-            }
-
-            $this->eventRecorder->record(
-                $conversation,
-                ConversationEventType::LEAD_STARTED,
-                [
-                    'reason' => 'lead_identity_declined',
-                    'source' => 'identity_confirmation',
-                    'previous_lead_id' => $candidate['previous_lead_id'] ?? null,
-                ],
-                idempotencyKey: "{$actionId}:lead.started",
-                correlationId: $actionId
-            );
-
-            $namePrompt = ConversationOrchestrator::leadPromptForQuestion('name')
-                ?? 'Great, please share your full name.';
-
-            $this->eventRecorder->record(
-                $conversation,
-                ConversationEventType::LEAD_QUESTION_ASKED,
-                [
-                    'question_key' => 'name',
-                    'label' => $namePrompt,
-                    'required' => true,
-                ],
-                idempotencyKey: "{$actionId}:lead.question.name",
-                correlationId: $actionId
-            );
-            $this->eventRecorder->record(
-                $conversation,
-                ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                ['content' => $namePrompt],
-                idempotencyKey: "{$actionId}:assistant.lead.question.name",
-                correlationId: $actionId
-            );
-        });
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordCompleted($conversation, $actionId, 'lead.confirm_identity', $latencyMs);
+        } catch (\Throwable $e) {
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordFailed($conversation, $actionId, 'lead.confirm_identity', $latencyMs, $e);
+            throw $e;
+        }
 
         $conversation->refresh();
 

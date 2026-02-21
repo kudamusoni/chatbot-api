@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Http\Widget;
 
+use App\Enums\WidgetDenyReason;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithConversations;
 use Tests\TestCase;
@@ -24,6 +25,7 @@ class BootstrapTest extends TestCase
                 'conversation_id',
                 'last_event_id',
                 'last_activity_at',
+                'widget_security_version',
             ]);
 
         // Token should be 64 characters
@@ -122,6 +124,25 @@ class BootstrapTest extends TestCase
 
         $response->assertUnprocessable()
             ->assertJsonValidationErrors(['client_id']);
+    }
+
+    public function test_bootstrap_requires_origin_when_origin_checks_enabled(): void
+    {
+        config()->set('widget.security.bypass_local_origin_checks', false);
+        $client = $this->makeClient([
+            'settings' => [
+                'allowed_origins' => ['https://example.com'],
+            ],
+        ]);
+
+        $response = $this->postJson('/api/widget/bootstrap', [
+            'client_id' => $client->id,
+        ]);
+
+        $response->assertStatus(403)
+            ->assertJson([
+                'reason_code' => WidgetDenyReason::ORIGIN_MISSING_BOOTSTRAP->value,
+            ]);
     }
 
     public function test_returns_last_event_id_and_last_activity_at(): void

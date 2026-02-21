@@ -8,6 +8,7 @@ use App\Http\Requests\Widget\ChatRequest;
 use App\Models\Conversation;
 use App\Services\ConversationEventRecorder;
 use App\Services\ConversationOrchestrator;
+use App\Services\TurnLifecycleRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -16,7 +17,8 @@ class ChatController extends Controller
 {
     public function __construct(
         private readonly ConversationEventRecorder $eventRecorder,
-        private readonly ConversationOrchestrator $orchestrator
+        private readonly ConversationOrchestrator $orchestrator,
+        private readonly TurnLifecycleRecorder $turnLifecycle
     ) {}
 
     /**
@@ -57,7 +59,36 @@ class ChatController extends Controller
 
             // Only record assistant message if user message was newly created (not a retry)
             if ($userResult['created']) {
-                $this->orchestrator->handleUserMessage($conversation, $userResult['event']);
+                $startedAt = microtime(true);
+                $this->turnLifecycle->recordStarted(
+                    $conversation,
+                    $messageId,
+                    'chat',
+                    $userResult['event']
+                );
+
+                try {
+                    $this->orchestrator->handleUserMessage($conversation, $userResult['event']);
+                    $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+                    $this->turnLifecycle->recordCompleted(
+                        $conversation,
+                        $messageId,
+                        'chat',
+                        $latencyMs,
+                        $userResult['event']
+                    );
+                } catch (\Throwable $e) {
+                    $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+                    $this->turnLifecycle->recordFailed(
+                        $conversation,
+                        $messageId,
+                        'chat',
+                        $latencyMs,
+                        $e,
+                        $userResult['event']
+                    );
+                    throw $e;
+                }
             }
         });
 

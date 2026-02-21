@@ -2,7 +2,11 @@
 
 namespace Tests\Feature\Http\Widget;
 
+use App\Enums\WidgetDenyReason;
+use App\Models\Conversation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Tests\Concerns\InteractsWithConversations;
 use Tests\TestCase;
 
@@ -454,5 +458,104 @@ class SseTest extends TestCase
 
         // last_event_id should be the third event (last replayed)
         $this->assertSame($result3['event']->id, $replayComplete['last_event_id']);
+    }
+
+    public function test_returns_409_when_cursor_ahead_of_latest(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+        $this->recordUserMessage($conversation, 'Hello');
+        $latestId = (int) $conversation->events()->max('id');
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'after_id' => $latestId + 10,
+            'once' => '1',
+        ]));
+
+        $response->assertStatus(409)
+            ->assertJson([
+                'error' => 'RESYNC_REQUIRED',
+                'reason_code' => WidgetDenyReason::CURSOR_AHEAD_OF_LATEST->value,
+            ]);
+    }
+
+    public function test_returns_409_when_replay_is_too_large(): void
+    {
+        config()->set('widget.sse.replay_max_events', 2);
+        config()->set('widget.sse.replay_max_age_seconds', 3600);
+
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+        $this->recordUserMessage($conversation, '1');
+        $this->recordAssistantMessage($conversation, '2');
+        $this->recordUserMessage($conversation, '3');
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'after_id' => 0,
+            'once' => '1',
+        ]));
+
+        $response->assertStatus(409)
+            ->assertJson([
+                'error' => 'RESYNC_REQUIRED',
+                'reason_code' => WidgetDenyReason::REPLAY_TOO_LARGE->value,
+            ]);
+    }
+
+    public function test_returns_409_when_cursor_is_too_old_for_retention_window(): void
+    {
+        config()->set('widget.sse.replay_max_events', 500);
+        config()->set('widget.sse.replay_max_age_seconds', 3600);
+
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        Carbon::setTestNow(now()->subHours(2));
+        $oldEvent = $this->recordUserMessage($conversation, 'old')['event'];
+
+        Carbon::setTestNow(now());
+        $this->recordAssistantMessage($conversation, 'recent');
+        Carbon::setTestNow();
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'after_id' => $oldEvent->id,
+            'once' => '1',
+        ]));
+
+        $response->assertStatus(409)
+            ->assertJson([
+                'error' => 'RESYNC_REQUIRED',
+                'reason_code' => WidgetDenyReason::CURSOR_TOO_OLD->value,
+            ]);
+    }
+
+    public function test_returns_429_when_session_connection_limit_is_reached(): void
+    {
+        config()->set('widget.sse.max_connections_per_session', 1);
+
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        $tokenHash = Conversation::hashSessionToken($rawToken);
+        Cache::put("sse:session:{$tokenHash}:conns", ['existing'], 70);
+        Cache::put("sse:session:{$tokenHash}:conn:existing", 1, 60);
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'once' => '1',
+        ]));
+
+        $response->assertStatus(429)
+            ->assertJson([
+                'error' => 'TOO_MANY_CONNECTIONS',
+                'reason_code' => WidgetDenyReason::SSE_SESSION_LIMIT->value,
+            ]);
     }
 }

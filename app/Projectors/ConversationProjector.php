@@ -11,6 +11,7 @@ use App\Models\ConversationEvent;
 use App\Models\ConversationMessage;
 use App\Models\Lead;
 use App\Models\Valuation;
+use App\Services\LeadPiiNormalizer;
 
 /**
  * Projects conversation events into read-optimized tables.
@@ -27,6 +28,14 @@ use App\Models\Valuation;
  */
 class ConversationProjector
 {
+    private LeadPiiNormalizer $leadPiiNormalizer;
+
+    public function __construct(
+        ?LeadPiiNormalizer $leadPiiNormalizer = null
+    ) {
+        $this->leadPiiNormalizer = $leadPiiNormalizer ?? new LeadPiiNormalizer();
+    }
+
     /**
      * Handle the event.
      */
@@ -59,6 +68,10 @@ class ConversationProjector
             ConversationEventType::VALUATION_REQUESTED => $this->projectValuationRequested($event),
             ConversationEventType::VALUATION_COMPLETED => $this->projectValuationCompleted($event),
             ConversationEventType::VALUATION_FAILED => $this->projectValuationFailed($event),
+
+            ConversationEventType::TURN_STARTED,
+            ConversationEventType::TURN_COMPLETED,
+            ConversationEventType::TURN_FAILED => null,
         };
     }
 
@@ -318,15 +331,21 @@ class ConversationProjector
             return;
         }
 
+        $email = (string) ($event->payload['email'] ?? '');
+        $phoneRaw = (string) ($event->payload['phone_raw'] ?? '');
+        $phoneNormalized = $this->leadPiiNormalizer->normalizePhone($phoneRaw);
+
         Lead::firstOrCreate(
             ['request_event_id' => $event->id],
             [
                 'conversation_id' => $event->conversation_id,
                 'client_id' => $event->client_id,
                 'name' => $event->payload['name'] ?? '',
-                'email' => $event->payload['email'] ?? '',
-                'phone_raw' => $event->payload['phone_raw'] ?? '',
-                'phone_normalized' => $event->payload['phone_normalized'] ?? '',
+                'email' => $email,
+                'email_hash' => $email !== '' ? $this->leadPiiNormalizer->emailHash($email) : null,
+                'phone_raw' => $phoneRaw,
+                'phone_normalized' => $phoneNormalized,
+                'phone_hash' => $phoneNormalized !== '' ? $this->leadPiiNormalizer->phoneHash($phoneRaw) : null,
                 'status' => 'REQUESTED',
             ]
         );

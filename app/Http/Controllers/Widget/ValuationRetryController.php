@@ -11,13 +11,15 @@ use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\Valuation;
 use App\Services\ConversationEventRecorder;
+use App\Services\TurnLifecycleRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
 class ValuationRetryController extends Controller
 {
     public function __construct(
-        private readonly ConversationEventRecorder $eventRecorder
+        private readonly ConversationEventRecorder $eventRecorder,
+        private readonly TurnLifecycleRecorder $turnLifecycle
     ) {}
 
     /**
@@ -71,31 +73,43 @@ class ValuationRetryController extends Controller
             ], 409);
         }
 
-        DB::transaction(function () use ($conversation, $failedValuation, $actionId) {
-            // Use same snapshot for retry (deterministic)
-            $inputSnapshot = $failedValuation->input_snapshot;
-            $snapshotHash = $failedValuation->snapshot_hash;
+        $startedAt = microtime(true);
+        $this->turnLifecycle->recordStarted($conversation, $actionId, 'valuation.retry');
 
-            // Reset the failed valuation to PENDING so job can re-run
-            $failedValuation->update([
-                'status' => ValuationStatus::PENDING,
-                'result' => null,
-            ]);
+        try {
+            DB::transaction(function () use ($conversation, $failedValuation, $actionId) {
+                // Use same snapshot for retry (deterministic)
+                $inputSnapshot = $failedValuation->input_snapshot;
+                $snapshotHash = $failedValuation->snapshot_hash;
 
-            // Emit valuation.requested with same snapshot_hash (idempotent)
-            $this->eventRecorder->record(
-                $conversation,
-                ConversationEventType::VALUATION_REQUESTED,
-                [
-                    'snapshot_hash' => $snapshotHash,
-                    'input_snapshot' => $inputSnapshot,
-                    'conversation_id' => $conversation->id,
-                    'retry' => true,
-                ],
-                idempotencyKey: $actionId, // Use action_id for this specific retry
-                correlationId: $actionId
-            );
-        });
+                // Reset the failed valuation to PENDING so job can re-run
+                $failedValuation->update([
+                    'status' => ValuationStatus::PENDING,
+                    'result' => null,
+                ]);
+
+                // Emit valuation.requested with same snapshot_hash (idempotent)
+                $this->eventRecorder->record(
+                    $conversation,
+                    ConversationEventType::VALUATION_REQUESTED,
+                    [
+                        'snapshot_hash' => $snapshotHash,
+                        'input_snapshot' => $inputSnapshot,
+                        'conversation_id' => $conversation->id,
+                        'retry' => true,
+                    ],
+                    idempotencyKey: $actionId, // Use action_id for this specific retry
+                    correlationId: $actionId
+                );
+            });
+
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordCompleted($conversation, $actionId, 'valuation.retry', $latencyMs);
+        } catch (\Throwable $e) {
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordFailed($conversation, $actionId, 'valuation.retry', $latencyMs, $e);
+            throw $e;
+        }
 
         $conversation->refresh();
 

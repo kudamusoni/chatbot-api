@@ -2,9 +2,14 @@
 
 namespace App\Http\Controllers\Widget;
 
+use App\Enums\WidgetDenyReason;
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -12,11 +17,6 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SseController extends Controller
 {
-    /**
-     * Maximum events to replay on reconnect.
-     */
-    private const REPLAY_LIMIT = 500;
-
     /**
      * Maximum duration for keepalive loop (seconds).
      */
@@ -69,9 +69,49 @@ class SseController extends Controller
         }
 
         // Determine cursor: Last-Event-ID header > after_id query > 0
-        $cursor = (int) ($request->header('Last-Event-ID')
+        $cursorRaw = $request->header('Last-Event-ID')
             ?? $request->query('after_id')
-            ?? 0);
+            ?? 0;
+        $cursor = (int) $cursorRaw;
+
+        if ($cursor < 0) {
+            return response()->json([
+                'error' => 'Invalid cursor',
+            ], 422);
+        }
+
+        $latestEventId = (int) (ConversationEvent::where('conversation_id', $conversation->id)->max('id') ?? 0);
+
+        if ($cursor > $latestEventId) {
+            return $this->resyncRequired(
+                WidgetDenyReason::CURSOR_AHEAD_OF_LATEST,
+                $conversation->id,
+                $latestEventId
+            );
+        }
+
+        $minRetainedEventId = $this->minRetainedEventId($conversation->id);
+
+        if ($cursor > 0 && ($minRetainedEventId === null || $cursor < $minRetainedEventId)) {
+            return $this->resyncRequired(
+                WidgetDenyReason::CURSOR_TOO_OLD,
+                $conversation->id,
+                $latestEventId
+            );
+        }
+
+        $replayMaxEvents = (int) config('widget.sse.replay_max_events', 500);
+        $replayCount = ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('id', '>', $cursor)
+            ->count();
+
+        if ($replayCount > $replayMaxEvents) {
+            return $this->resyncRequired(
+                WidgetDenyReason::REPLAY_TOO_LARGE,
+                $conversation->id,
+                $latestEventId
+            );
+        }
 
         // Test mode flag: only allowed in testing/local environments
         // This prevents production memory issues from buffering large payloads
@@ -79,6 +119,22 @@ class SseController extends Controller
             && app()->environment(['testing', 'local']);
 
         $conversationId = $conversation->id;
+        $tokenHash = Conversation::hashSessionToken($sessionToken);
+        $connectionId = (string) Str::uuid();
+
+        if (!$this->acquireSessionConnection($tokenHash, $connectionId)) {
+            Log::warning('SSE denied by session connection cap', [
+                'reason_code' => WidgetDenyReason::SSE_SESSION_LIMIT->value,
+                'client_id' => $clientId,
+                'conversation_id' => $conversationId,
+            ]);
+
+            return response()->json([
+                'error' => 'TOO_MANY_CONNECTIONS',
+                'reason_code' => WidgetDenyReason::SSE_SESSION_LIMIT->value,
+                'message' => 'Too many active streams for this session.',
+            ], 429);
+        }
 
         // For test mode with once=1, return a regular response with captured content
         // This makes PHPUnit tests deterministic and able to inspect the content
@@ -86,8 +142,12 @@ class SseController extends Controller
             $this->testMode = true;
             $this->outputBuffer = '';
 
-            $this->sendRetryDirective();
-            $this->streamEventsOnce($conversationId, $cursor);
+            try {
+                $this->sendRetryDirective();
+                $this->streamEventsOnce($conversationId, $cursor);
+            } finally {
+                $this->releaseSessionConnection($tokenHash, $connectionId);
+            }
 
             return response($this->outputBuffer, 200, [
                 'Content-Type' => 'text/event-stream',
@@ -99,8 +159,12 @@ class SseController extends Controller
 
         // Production streaming mode
         return new StreamedResponse(
-            function () use ($conversationId, $cursor) {
-                $this->streamEventsLoop($conversationId, $cursor);
+            function () use ($conversationId, $cursor, $tokenHash, $connectionId) {
+                try {
+                    $this->streamEventsLoop($conversationId, $cursor, $tokenHash, $connectionId);
+                } finally {
+                    $this->releaseSessionConnection($tokenHash, $connectionId);
+                }
             },
             200,
             [
@@ -124,7 +188,7 @@ class SseController extends Controller
     /**
      * Stream events with keepalive loop (production mode).
      */
-    private function streamEventsLoop(string $conversationId, int $cursor): void
+    private function streamEventsLoop(string $conversationId, int $cursor, string $tokenHash, string $connectionId): void
     {
         // Prevent mid-write crashes on disconnect
         ignore_user_abort(true);
@@ -142,7 +206,7 @@ class SseController extends Controller
         $lastSentId = $this->replayEvents($conversationId, $cursor);
 
         // Keepalive loop
-        $this->keepaliveLoop($conversationId, $lastSentId);
+        $this->keepaliveLoop($conversationId, $lastSentId, $tokenHash, $connectionId);
     }
 
     /**
@@ -152,26 +216,19 @@ class SseController extends Controller
      */
     private function replayEvents(string $conversationId, int $cursor): int
     {
-        // Query LIMIT + 1 to detect overflow
+        $replayMaxEvents = (int) config('widget.sse.replay_max_events', 500);
+
         $events = ConversationEvent::where('conversation_id', $conversationId)
             ->where('id', '>', $cursor)
             ->orderBy('id', 'asc')
-            ->limit(self::REPLAY_LIMIT + 1)
+            ->limit($replayMaxEvents)
             ->get();
-
-        $hasMore = $events->count() > self::REPLAY_LIMIT;
-        $eventsToSend = $events->take(self::REPLAY_LIMIT);
 
         $lastSentId = $cursor;
 
-        foreach ($eventsToSend as $event) {
+        foreach ($events as $event) {
             $this->sendEvent($event);
             $lastSentId = $event->id;
-        }
-
-        // Emit error if replay limit exceeded
-        if ($hasMore) {
-            $this->sendReplayLimitError($lastSentId);
         }
 
         // Signal that replay is complete (stream-only marker, not stored)
@@ -183,7 +240,7 @@ class SseController extends Controller
     /**
      * Keepalive loop: ping every 15s, poll for new events, max 60s.
      */
-    private function keepaliveLoop(string $conversationId, int $lastSentId): void
+    private function keepaliveLoop(string $conversationId, int $lastSentId, string $tokenHash, string $connectionId): void
     {
         $startTime = time();
 
@@ -195,6 +252,7 @@ class SseController extends Controller
 
             // Send ping
             $this->sendPing();
+            $this->refreshSessionConnectionTtl($tokenHash, $connectionId);
 
             // Poll for new events
             $newEvents = ConversationEvent::where('conversation_id', $conversationId)
@@ -252,19 +310,6 @@ class SseController extends Controller
     }
 
     /**
-     * Send replay limit error event.
-     */
-    private function sendReplayLimitError(int $lastSentId): void
-    {
-        $this->output("event: conversation.error\n");
-        $this->output("data: " . json_encode([
-            'code' => 'REPLAY_LIMIT',
-            'message' => 'Too many events to replay. Reconnect with new cursor.',
-            'last_sent_id' => $lastSentId,
-        ]) . "\n\n");
-    }
-
-    /**
      * Send replay complete signal.
      *
      * This is a stream-only marker (not stored in conversation_events).
@@ -301,5 +346,90 @@ class SseController extends Controller
     private function unauthorizedResponse(string $message): JsonResponse
     {
         return response()->json(['error' => $message], 401);
+    }
+
+    private function minRetainedEventId(string $conversationId): ?int
+    {
+        $maxAgeSeconds = (int) config('widget.sse.replay_max_age_seconds', 3600);
+        $threshold = Carbon::now()->subSeconds($maxAgeSeconds);
+
+        $id = ConversationEvent::where('conversation_id', $conversationId)
+            ->where('created_at', '>=', $threshold)
+            ->orderBy('id', 'asc')
+            ->value('id');
+
+        return $id === null ? null : (int) $id;
+    }
+
+    private function resyncRequired(WidgetDenyReason $reason, string $conversationId, int $lastEventId): JsonResponse
+    {
+        return response()->json([
+            'error' => 'RESYNC_REQUIRED',
+            'reason_code' => $reason->value,
+            'message' => 'Replay cursor is outside replay window. Call /api/widget/history and reconnect.',
+            'conversation_id' => $conversationId,
+            'last_event_id' => $lastEventId,
+        ], 409);
+    }
+
+    private function acquireSessionConnection(string $tokenHash, string $connectionId): bool
+    {
+        $maxConnections = (int) config('widget.sse.max_connections_per_session', 2);
+        $setKey = $this->sessionSetKey($tokenHash);
+        $connections = Cache::get($setKey, []);
+
+        if (!is_array($connections)) {
+            $connections = [];
+        }
+
+        $connections = array_values(array_filter($connections, function (string $id) use ($tokenHash) {
+            return Cache::has($this->sessionConnKey($tokenHash, $id));
+        }));
+
+        if (count($connections) >= $maxConnections) {
+            Cache::put($setKey, $connections, $this->connectionTtl() + 10);
+
+            return false;
+        }
+
+        $connections[] = $connectionId;
+        Cache::put($setKey, array_values(array_unique($connections)), $this->connectionTtl() + 10);
+        $this->refreshSessionConnectionTtl($tokenHash, $connectionId);
+
+        return true;
+    }
+
+    private function refreshSessionConnectionTtl(string $tokenHash, string $connectionId): void
+    {
+        Cache::put($this->sessionConnKey($tokenHash, $connectionId), 1, $this->connectionTtl());
+    }
+
+    private function releaseSessionConnection(string $tokenHash, string $connectionId): void
+    {
+        Cache::forget($this->sessionConnKey($tokenHash, $connectionId));
+        $setKey = $this->sessionSetKey($tokenHash);
+        $connections = Cache::get($setKey, []);
+
+        if (!is_array($connections)) {
+            return;
+        }
+
+        $connections = array_values(array_filter($connections, fn (string $id) => $id !== $connectionId));
+        Cache::put($setKey, $connections, $this->connectionTtl() + 10);
+    }
+
+    private function sessionSetKey(string $tokenHash): string
+    {
+        return "sse:session:{$tokenHash}:conns";
+    }
+
+    private function sessionConnKey(string $tokenHash, string $connectionId): string
+    {
+        return "sse:session:{$tokenHash}:conn:{$connectionId}";
+    }
+
+    private function connectionTtl(): int
+    {
+        return (int) config('widget.sse.connection_ttl_seconds', 60);
     }
 }

@@ -8,9 +8,12 @@ use App\Models\AppraisalQuestion;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\Lead;
+use App\Services\LeadPiiNormalizer;
 
 class ConversationOrchestrator
 {
+    private LeadPiiNormalizer $leadPiiNormalizer;
+
     private const LEAD_IDENTITY_PROMPT = 'I found your previous contact details. Is this you?';
 
     private const LEAD_PROMPT_BY_KEY = [
@@ -26,8 +29,11 @@ class ConversationOrchestrator
     ];
 
     public function __construct(
-        private readonly ConversationEventRecorder $eventRecorder
-    ) {}
+        private readonly ConversationEventRecorder $eventRecorder,
+        ?LeadPiiNormalizer $leadPiiNormalizer = null
+    ) {
+        $this->leadPiiNormalizer = $leadPiiNormalizer ?? new LeadPiiNormalizer();
+    }
 
     /**
      * Shared assistant message sequence after a lead request is captured.
@@ -239,7 +245,7 @@ class ConversationOrchestrator
         }
 
         $phoneRaw = trim((string) $text);
-        $phoneNormalized = $this->normalizePhone($phoneRaw);
+        $phoneNormalized = $this->leadPiiNormalizer->normalizePhone($phoneRaw);
 
         $this->eventRecorder->record(
             $conversation,
@@ -362,29 +368,15 @@ class ConversationOrchestrator
 
         return match ($questionKey) {
             'name' => [strlen($trimmed) > 0, $trimmed],
-            'email' => [filter_var($trimmed, FILTER_VALIDATE_EMAIL) !== false, strtolower($trimmed)],
-            'phone' => [$this->isValidPhone($trimmed), $this->normalizePhone($trimmed)],
+            'email' => [filter_var($trimmed, FILTER_VALIDATE_EMAIL) !== false, $this->leadPiiNormalizer->normalizeEmail($trimmed)],
+            'phone' => [$this->isValidPhone($trimmed), $this->leadPiiNormalizer->normalizePhone($trimmed)],
             default => [false, $trimmed],
         };
     }
 
-    private function normalizePhone(string $value): string
-    {
-        $value = trim($value);
-
-        if ($value === '') {
-            return '';
-        }
-
-        $hasPlus = str_starts_with($value, '+');
-        $digitsOnly = preg_replace('/\D+/', '', $value) ?? '';
-
-        return $hasPlus ? '+' . $digitsOnly : $digitsOnly;
-    }
-
     private function isValidPhone(string $value): bool
     {
-        $normalized = $this->normalizePhone($value);
+        $normalized = $this->leadPiiNormalizer->normalizePhone($value);
         $digits = preg_replace('/\D+/', '', $normalized) ?? '';
         $digitCount = strlen($digits);
 
@@ -530,6 +522,7 @@ class ConversationOrchestrator
     private function firstRequiredQuestion(Conversation $conversation): ?AppraisalQuestion
     {
         return AppraisalQuestion::where('client_id', $conversation->client_id)
+            ->where('is_active', true)
             ->where('required', true)
             ->orderBy('order_index')
             ->first();
@@ -541,6 +534,7 @@ class ConversationOrchestrator
         $answeredKeys = array_keys($answers);
 
         return AppraisalQuestion::where('client_id', $conversation->client_id)
+            ->where('is_active', true)
             ->where('required', true)
             ->whereNotIn('key', $answeredKeys)
             ->orderBy('order_index')
@@ -561,6 +555,7 @@ class ConversationOrchestrator
     private function missingRequiredKeys(Conversation $conversation, array $snapshot): array
     {
         $requiredKeys = AppraisalQuestion::where('client_id', $conversation->client_id)
+            ->where('is_active', true)
             ->where('required', true)
             ->orderBy('order_index')
             ->pluck('key')

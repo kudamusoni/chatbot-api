@@ -18,15 +18,23 @@ class Lead extends Model
         'request_event_id',
         'name',
         'email',
+        'email_hash',
         'phone_raw',
         'phone_normalized',
+        'phone_hash',
         'status',
+        'notes',
+        'updated_by',
     ];
 
     protected function casts(): array
     {
         return [
             'request_event_id' => 'integer',
+            'email' => 'encrypted',
+            'phone_raw' => 'encrypted',
+            'phone_normalized' => 'encrypted',
+            'updated_by' => 'integer',
         ];
     }
 

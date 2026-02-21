@@ -10,6 +10,8 @@ class AppraisalQuestion extends Model
 {
     use HasUuids;
 
+    public const TYPES = ['text', 'number', 'select', 'yes_no'];
+
     protected $fillable = [
         'client_id',
         'key',
@@ -18,6 +20,7 @@ class AppraisalQuestion extends Model
         'input_type',
         'required',
         'order_index',
+        'is_active',
         'options',
     ];
 
@@ -25,6 +28,7 @@ class AppraisalQuestion extends Model
     {
         return [
             'required' => 'boolean',
+            'is_active' => 'boolean',
             'options' => 'array',
         ];
     }

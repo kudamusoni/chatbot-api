@@ -24,6 +24,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'platform_role',
     ];
 
     /**
@@ -47,6 +48,21 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->platform_role === 'super_admin';
+    }
+
+    public function isSupportAdmin(): bool
+    {
+        return $this->platform_role === 'support_admin';
+    }
+
+    public function isPlatformAdmin(): bool
+    {
+        return $this->isSuperAdmin() || $this->isSupportAdmin();
     }
 
     /**
@@ -73,7 +89,20 @@ class User extends Authenticatable
     public function roleForClient(string $clientId): ?string
     {
         $client = $this->clients()->where('clients.id', $clientId)->first();
+        $role = $client?->pivot?->role;
 
-        return $client?->pivot?->role;
+        return $role === 'member' ? 'viewer' : $role;
+    }
+
+    public function hasClientRole(string $clientId, array $roles): bool
+    {
+        $role = $this->roleForClient($clientId);
+
+        return $role !== null && in_array($role, $roles, true);
+    }
+
+    public function canManageClient(string $clientId): bool
+    {
+        return $this->hasClientRole($clientId, ['owner', 'admin']);
     }
 }

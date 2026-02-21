@@ -9,6 +9,7 @@ use App\Http\Requests\Widget\BackToChatRequest;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Services\ConversationEventRecorder;
+use App\Services\TurnLifecycleRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -17,7 +18,8 @@ class BackToChatController extends Controller
     private const FOLLOW_UP_MESSAGE = 'Do you have any more questions?';
 
     public function __construct(
-        private readonly ConversationEventRecorder $eventRecorder
+        private readonly ConversationEventRecorder $eventRecorder,
+        private readonly TurnLifecycleRecorder $turnLifecycle
     ) {}
 
     /**
@@ -55,25 +57,37 @@ class BackToChatController extends Controller
             ]);
         }
 
-        DB::transaction(function () use ($conversation, $actionId, $assistantIdempotencyKey) {
-            $conversation->update([
-                'state' => ConversationState::CHAT,
-                'appraisal_answers' => null,
-                'appraisal_current_key' => null,
-                'appraisal_snapshot' => null,
-                'lead_answers' => null,
-                'lead_current_key' => null,
-                'lead_identity_candidate' => null,
-            ]);
+        $startedAt = microtime(true);
+        $this->turnLifecycle->recordStarted($conversation, $actionId, 'back_to_chat');
 
-            $this->eventRecorder->record(
-                $conversation,
-                ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                ['content' => self::FOLLOW_UP_MESSAGE],
-                idempotencyKey: $assistantIdempotencyKey,
-                correlationId: $actionId
-            );
-        });
+        try {
+            DB::transaction(function () use ($conversation, $actionId, $assistantIdempotencyKey) {
+                $conversation->update([
+                    'state' => ConversationState::CHAT,
+                    'appraisal_answers' => null,
+                    'appraisal_current_key' => null,
+                    'appraisal_snapshot' => null,
+                    'lead_answers' => null,
+                    'lead_current_key' => null,
+                    'lead_identity_candidate' => null,
+                ]);
+
+                $this->eventRecorder->record(
+                    $conversation,
+                    ConversationEventType::ASSISTANT_MESSAGE_CREATED,
+                    ['content' => self::FOLLOW_UP_MESSAGE],
+                    idempotencyKey: $assistantIdempotencyKey,
+                    correlationId: $actionId
+                );
+            });
+
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordCompleted($conversation, $actionId, 'back_to_chat', $latencyMs);
+        } catch (\Throwable $e) {
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordFailed($conversation, $actionId, 'back_to_chat', $latencyMs, $e);
+            throw $e;
+        }
 
         $conversation->refresh();
 

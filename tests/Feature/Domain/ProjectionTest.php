@@ -158,6 +158,30 @@ class ProjectionTest extends TestCase
         $this->assertNotNull($conversation->last_activity_at);
     }
 
+    public function test_turn_events_are_telemetry_only_and_do_not_create_messages_or_state_changes(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::CHAT,
+        ]);
+
+        $result = $this->recordEvent(
+            $conversation,
+            ConversationEventType::TURN_STARTED,
+            [
+                'turn_id' => 'test-turn',
+                'trigger' => 'chat',
+                'trigger_event_id' => null,
+            ]
+        );
+
+        $conversation->refresh();
+
+        $this->assertSame(0, ConversationMessage::where('conversation_id', $conversation->id)->count());
+        $this->assertEquals(ConversationState::CHAT, $conversation->state);
+        $this->assertEquals($result['event']->id, $conversation->last_event_id);
+    }
+
     // =========================================================================
     // State Transition Invariants
     // =========================================================================

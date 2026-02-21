@@ -93,7 +93,11 @@ class ResetTest extends TestCase
             ->first();
 
         $this->assertNotNull($introEvent);
-        $this->assertSame($newConversation->last_event_id, $introEvent->id);
+        $turnCompleted = ConversationEvent::where('conversation_id', $newConversationId)
+            ->where('type', ConversationEventType::TURN_COMPLETED)
+            ->first();
+        $this->assertNotNull($turnCompleted);
+        $this->assertSame($newConversation->last_event_id, $turnCompleted->id);
 
         $this->assertSame(1, ConversationMessage::where('conversation_id', $newConversationId)->count());
         $this->assertSame(1, Valuation::where('conversation_id', $newConversationId)->count());

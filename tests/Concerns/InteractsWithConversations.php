@@ -45,6 +45,7 @@ trait InteractsWithConversations
             'input_type' => 'text',
             'required' => true,
             'order_index' => 1,
+            'is_active' => true,
             'options' => null,
         ], $attributes));
     }

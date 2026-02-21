@@ -22,7 +22,9 @@ class ProductCatalog extends Model
         'price',
         'currency',
         'sold_at',
+        'sold_at_key',
         'normalized_text',
+        'normalized_title_hash',
     ];
 
     protected function casts(): array
@@ -31,6 +33,7 @@ class ProductCatalog extends Model
             'source' => ProductSource::class,
             'price' => 'integer',
             'sold_at' => 'datetime',
+            'sold_at_key' => 'datetime',
         ];
     }
 
@@ -43,6 +46,8 @@ class ProductCatalog extends Model
 
         static::saving(function (self $model) {
             $model->normalized_text = $model->computeNormalizedText();
+            $model->normalized_title_hash = $model->computeNormalizedTitleHash();
+            $model->sold_at_key = $model->sold_at ?? '1970-01-01 00:00:00';
         });
     }
 
@@ -61,6 +66,13 @@ class ProductCatalog extends Model
 
         // Lowercase and remove extra whitespace
         return strtolower(preg_replace('/\s+/', ' ', trim($text)));
+    }
+
+    public function computeNormalizedTitleHash(): string
+    {
+        $title = strtolower((string) preg_replace('/\s+/', ' ', trim((string) $this->title)));
+
+        return hash('sha256', $title);
     }
 
     /**

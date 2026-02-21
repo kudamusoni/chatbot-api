@@ -21,7 +21,7 @@ Route::get('/user', function (Request $request) {
 })->middleware('auth:sanctum');
 
 // Widget routes (no auth - public endpoints for chatbot widget)
-Route::prefix('widget')->group(function () {
+Route::prefix('widget')->middleware('widget.origin')->group(function () {
     Route::post('bootstrap', [BootstrapController::class, 'store']);
     Route::post('chat', [ChatController::class, 'store']);
     Route::post('appraisal/confirm', [AppraisalConfirmController::class, 'store']);

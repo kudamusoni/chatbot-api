@@ -38,6 +38,11 @@ enum ConversationEventType: string
     case LEAD_ANSWER_RECORDED = 'lead.answer.recorded';
     case LEAD_REQUESTED = 'lead.requested';
 
+    // Turn lifecycle telemetry (non-business events)
+    case TURN_STARTED = 'turn.started';
+    case TURN_COMPLETED = 'turn.completed';
+    case TURN_FAILED = 'turn.failed';
+
     /**
      * Check if this event type produces a message projection.
      */

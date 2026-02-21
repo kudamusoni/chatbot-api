@@ -46,7 +46,7 @@ class ChatTest extends TestCase
         $events = ConversationEvent::where('conversation_id', $conversation->id)
             ->orderBy('id')
             ->get();
-        $this->assertCount(2, $events);
+        $this->assertCount(4, $events);
 
         // Should create 2 projected messages - ordered by event_id
         $messages = ConversationMessage::where('conversation_id', $conversation->id)
@@ -283,7 +283,7 @@ class ChatTest extends TestCase
 
         // Should still only have 2 events (not 4)
         $eventCount = ConversationEvent::where('conversation_id', $conversation->id)->count();
-        $this->assertSame(2, $eventCount);
+        $this->assertSame(4, $eventCount);
 
         // Should still only have 2 messages (not 4)
         $messageCount = ConversationMessage::where('conversation_id', $conversation->id)->count();
@@ -411,11 +411,12 @@ class ChatTest extends TestCase
     {
         $client = $this->makeClient();
         [$conversation, $rawToken] = $this->makeConversation($client);
+        $messageId = (string) Str::uuid();
 
         $response = $this->postJson('/api/widget/chat', [
             'client_id' => $client->id,
             'session_token' => $rawToken,
-            'message_id' => (string) Str::uuid(),
+            'message_id' => $messageId,
             'text' => 'Hello',
         ]);
 
@@ -426,13 +427,24 @@ class ChatTest extends TestCase
         // correlation_id must be a valid UUID
         $this->assertTrue(Str::isUuid($correlationId));
 
-        // Both events should share the same correlation_id - ordered by id
+        // Four events are emitted: user, turn.started, assistant, turn.completed.
         $events = ConversationEvent::where('conversation_id', $conversation->id)
             ->orderBy('id')
             ->get();
 
-        $this->assertCount(2, $events);
-        $this->assertTrue($events->every(fn ($e) => $e->correlation_id === $correlationId));
+        $this->assertCount(4, $events);
+        $this->assertTrue(
+            $events->whereIn('type', [
+                ConversationEventType::USER_MESSAGE_CREATED,
+                ConversationEventType::ASSISTANT_MESSAGE_CREATED,
+            ])->every(fn ($e) => $e->correlation_id === $correlationId)
+        );
+        $this->assertTrue(
+            $events->whereIn('type', [
+                ConversationEventType::TURN_STARTED,
+                ConversationEventType::TURN_COMPLETED,
+            ])->every(fn ($e) => $e->correlation_id === $messageId)
+        );
     }
 
     public function test_last_event_id_increments_correctly(): void
@@ -492,8 +504,8 @@ class ChatTest extends TestCase
         // Second last_event_id should be greater than first
         $this->assertGreaterThan($firstLastEventId, $secondLastEventId);
 
-        // Should have 4 events total (2 per message)
+        // Should have 8 events total (4 per message: user, assistant, turn.started, turn.completed)
         $eventCount = ConversationEvent::where('conversation_id', $conversation->id)->count();
-        $this->assertSame(4, $eventCount);
+        $this->assertSame(8, $eventCount);
     }
 }

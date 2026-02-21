@@ -9,15 +9,17 @@ use App\Http\Requests\Widget\ResetRequest;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Services\ConversationEventRecorder;
+use App\Services\TurnLifecycleRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
 class ResetController extends Controller
 {
-    private const INTRO_MESSAGE = 'Hello. How can I help you today?';
+    private const INTRO_MESSAGE = 'Thank you for your message. How can I help you today?';
 
     public function __construct(
-        private readonly ConversationEventRecorder $eventRecorder
+        private readonly ConversationEventRecorder $eventRecorder,
+        private readonly TurnLifecycleRecorder $turnLifecycle
     ) {}
 
     /**
@@ -57,27 +59,48 @@ class ResetController extends Controller
             ]);
         }
 
-        $conversation = DB::transaction(function () use ($conversation, $clientId, $sessionToken, $actionId, $introIdempotencyKey) {
-            // Delete existing conversation (cascade clears events/messages/valuations/leads).
-            $conversation->delete();
+        $startedAt = microtime(true);
 
-            // Recreate a fresh conversation while preserving the same session token.
-            $freshConversation = Conversation::create([
-                'client_id' => $clientId,
-                'session_token_hash' => Conversation::hashSessionToken($sessionToken),
-                'state' => ConversationState::CHAT,
-            ]);
+        try {
+            $conversation = DB::transaction(function () use ($conversation, $actionId, $introIdempotencyKey) {
+                // Clear chat/event history while preserving the conversation and linked leads/valuations.
+                DB::table('conversation_events')
+                    ->where('conversation_id', $conversation->id)
+                    ->delete();
 
-            $this->eventRecorder->record(
-                $freshConversation,
-                ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                ['content' => self::INTRO_MESSAGE],
-                idempotencyKey: $introIdempotencyKey,
-                correlationId: $actionId
-            );
+                $conversation->update([
+                    'state' => ConversationState::CHAT,
+                    'context' => null,
+                    'appraisal_answers' => null,
+                    'appraisal_current_key' => null,
+                    'appraisal_snapshot' => null,
+                    'lead_answers' => null,
+                    'lead_current_key' => null,
+                    'lead_identity_candidate' => null,
+                    'last_event_id' => 0,
+                    'last_activity_at' => null,
+                ]);
 
-            return $freshConversation;
-        });
+                $this->turnLifecycle->recordStarted($conversation, $actionId, 'reset');
+
+                $this->eventRecorder->record(
+                    $conversation,
+                    ConversationEventType::ASSISTANT_MESSAGE_CREATED,
+                    ['content' => self::INTRO_MESSAGE],
+                    idempotencyKey: $introIdempotencyKey,
+                    correlationId: $actionId
+                );
+
+                return $conversation;
+            });
+
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordCompleted($conversation, $actionId, 'reset', $latencyMs);
+        } catch (\Throwable $e) {
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->turnLifecycle->recordFailed($conversation, $actionId, 'reset', $latencyMs, $e);
+            throw $e;
+        }
 
         $conversation->refresh();
 

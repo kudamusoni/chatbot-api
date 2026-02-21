@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Widget;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Widget\BootstrapRequest;
+use App\Models\Client;
 use App\Models\Conversation;
 use Illuminate\Http\JsonResponse;
 
@@ -18,6 +19,9 @@ class BootstrapController extends Controller
     {
         $clientId = $request->validated('client_id');
         $sessionToken = $request->validated('session_token');
+        $client = Client::find($clientId);
+        $securityVersion = (int) ($client?->clientSetting?->widget_security_version
+            ?? ($client?->settings['widget_security_version'] ?? 1));
 
         $conversation = null;
         $rawToken = null;
@@ -40,6 +44,7 @@ class BootstrapController extends Controller
             'conversation_id' => $conversation->id,
             'last_event_id' => $conversation->last_event_id ?? 0,
             'last_activity_at' => $conversation->last_activity_at?->toIso8601String(),
+            'widget_security_version' => $securityVersion,
         ]);
     }
 }
