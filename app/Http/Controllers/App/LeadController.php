@@ -8,9 +8,11 @@ use App\Models\Lead;
 use App\Services\AuditLogger;
 use App\Support\CurrentClient;
 use App\Support\DashboardListDefaults;
+use App\Support\DashboardRange;
 use App\Support\LeadPresenter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class LeadController extends Controller
 {
@@ -29,6 +31,25 @@ class LeadController extends Controller
 
         $leadsQuery = Lead::query()
             ->where('client_id', $currentClient->id());
+
+        if ($request->filled('status')) {
+            $statuses = $this->normalizedStatusFilter((string) $request->query('status'));
+            $leadsQuery->whereIn('status', $statuses);
+        }
+
+        if ($request->filled('range')) {
+            $this->applyRangeFilter(
+                $leadsQuery,
+                (string) $request->query('range')
+            );
+        }
+
+        if ($request->filled('q')) {
+            $this->applySearchFilter(
+                $leadsQuery,
+                (string) $request->query('q')
+            );
+        }
 
         // Unsupported sort params are intentionally ignored until explicitly supported.
         DashboardListDefaults::applyDefaultSort($leadsQuery, 'leads');
@@ -130,5 +151,48 @@ class LeadController extends Controller
             'Content-Type' => 'text/csv',
             'Content-Disposition' => 'attachment; filename="leads.csv"',
         ]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function normalizedStatusFilter(string $raw): array
+    {
+        $status = strtoupper(trim($raw));
+
+        return [$status];
+    }
+
+    private function applyRangeFilter($query, string $range): void
+    {
+        try {
+            $parsed = DashboardRange::parse($range);
+        } catch (\InvalidArgumentException) {
+            throw ValidationException::withMessages([
+                'range' => ['The selected range is invalid.'],
+            ]);
+        }
+
+        if ($parsed->from !== null) {
+            $query->whereBetween('created_at', [$parsed->from, $parsed->to]);
+        }
+    }
+
+    private function applySearchFilter($query, string $rawSearch): void
+    {
+        $search = trim($rawSearch);
+        if ($search === '') {
+            return;
+        }
+
+        $needle = '%' . mb_strtolower($search) . '%';
+
+        $query->where(function ($q) use ($needle): void {
+            $q->whereRaw('LOWER(name) LIKE ?', [$needle])
+                ->orWhereRaw('LOWER(status) LIKE ?', [$needle])
+                ->orWhereRaw('LOWER(COALESCE(notes, \'\')) LIKE ?', [$needle])
+                ->orWhereRaw('LOWER(id::text) LIKE ?', [$needle])
+                ->orWhereRaw('LOWER(conversation_id::text) LIKE ?', [$needle]);
+        });
     }
 }

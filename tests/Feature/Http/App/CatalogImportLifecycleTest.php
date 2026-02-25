@@ -30,7 +30,8 @@ class CatalogImportLifecycleTest extends TestCase
             ->withSession(['active_client_id' => $client->id])
             ->postJson('/app/catalog-imports')
             ->assertCreated()
-            ->assertJsonPath('ok', true);
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('reused', false);
 
         $importId = (string) $create->json('import.id');
 
@@ -44,12 +45,11 @@ class CatalogImportLifecycleTest extends TestCase
             ])
             ->assertOk();
 
-        $this->assertSame('UPLOADED', $upload->json('status'));
-
-        $this->actingAs($user, 'web')
-            ->withSession(['active_client_id' => $client->id])
-            ->postJson("/app/catalog-imports/{$importId}/validate")
-            ->assertOk();
+        $this->assertSame('VALIDATED', $upload->json('status'));
+        $upload->assertJsonPath('columns.0', 'title');
+        $upload->assertJsonPath('columns.1', 'price');
+        $upload->assertJsonPath('sample_rows.0.0', 'Rolex');
+        $upload->assertJsonPath('sample_rows.0.1', '1000');
 
         $this->actingAs($user, 'web')
             ->withSession(['active_client_id' => $client->id])
@@ -88,5 +88,28 @@ class CatalogImportLifecycleTest extends TestCase
             ->getJson('/app/catalog-imports')
             ->assertOk()
             ->assertJsonPath('data.0.id', $importId);
+    }
+
+    public function test_create_reuses_existing_non_terminal_draft_for_same_user_and_client(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'admin']);
+
+        $first = $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->postJson('/app/catalog-imports')
+            ->assertCreated();
+
+        $firstId = (string) $first->json('import.id');
+
+        $second = $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->postJson('/app/catalog-imports')
+            ->assertOk()
+            ->assertJsonPath('reused', true);
+
+        $this->assertSame($firstId, $second->json('import.id'));
+        $this->assertSame(1, CatalogImport::query()->where('client_id', $client->id)->count());
     }
 }

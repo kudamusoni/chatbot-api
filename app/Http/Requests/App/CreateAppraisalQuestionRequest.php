@@ -24,6 +24,7 @@ class CreateAppraisalQuestionRequest extends FormRequest
                 'required',
                 'string',
                 'regex:/^[a-z0-9_]{2,64}$/',
+                Rule::in(AppraisalQuestion::ALLOWED_KEYS),
                 Rule::unique('appraisal_questions', 'key')->where(function ($query) {
                     return $query->where('client_id', (string) app(CurrentClient::class)->id());
                 }),

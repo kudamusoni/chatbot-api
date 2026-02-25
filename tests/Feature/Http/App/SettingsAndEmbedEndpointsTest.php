@@ -57,8 +57,8 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $this->actingAs($viewer, 'web')
             ->withSession(['active_client_id' => $client->id])
             ->putJson('/app/settings', [
-                'client' => ['name' => 'Blocked'],
-                'settings' => ['bot_name' => 'Nope'],
+                'client_name' => 'Blocked',
+                'bot_name' => 'Nope',
             ])
             ->assertStatus(403)
             ->assertJson([
@@ -87,17 +87,15 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $response = $this->actingAs($admin, 'web')
             ->withSession(['active_client_id' => $client->id])
             ->putJson('/app/settings', [
-                'client' => ['name' => 'Acme Auctions'],
-                'settings' => [
-                    'bot_name' => 'Acme Assistant',
-                    'brand_color' => '#0EA5E9',
-                    'accent_color' => '#22C55E',
-                    'logo_url' => 'https://cdn.example.com/logo.png',
-                    'prompt_settings' => ['tone' => 'concise'],
-                    'allowed_origins' => ['https://malicious-write-should-ignore.example'],
-                    'widget_security_version' => 999,
-                    'unknown_setting' => 'ignore-me',
-                ],
+                'client_name' => 'Acme Auctions',
+                'bot_name' => 'Acme Assistant',
+                'brand_color' => '#0EA5E9',
+                'accent_color' => '#22C55E',
+                'logo_url' => 'https://cdn.example.com/logo.png',
+                'prompt_settings' => ['tone' => 'concise'],
+                'allowed_origins' => ['https://malicious-write-should-ignore.example'],
+                'widget_security_version' => 999,
+                'unknown_setting' => 'ignore-me',
             ])
             ->assertOk();
 
@@ -139,6 +137,94 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $this->assertDatabaseHas('client_settings', ['client_id' => $client->id]);
     }
 
+    public function test_admin_can_put_settings_using_flat_intro_message_field(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        ClientSetting::create([
+            'client_id' => $client->id,
+            'bot_name' => 'Old Bot',
+            'prompt_settings' => ['tone' => 'formal'],
+            'widget_security_version' => 3,
+        ]);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings', [
+                'bot_name' => 'Kuda Test',
+                'intro_message' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.bot_name', 'Kuda Test')
+            ->assertJsonPath('settings.prompt_settings.intro_message', null);
+
+        $settings = ClientSetting::query()->where('client_id', $client->id)->firstOrFail();
+        $this->assertSame('Kuda Test', $settings->bot_name);
+        $this->assertSame(['tone' => 'formal', 'intro_message' => null], $settings->prompt_settings);
+    }
+
+    public function test_admin_can_put_settings_using_flat_canonical_payload_shape(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings', [
+                'bot_name' => 'Kuda Test',
+                'colors' => [],
+                'prompt_settings' => [],
+                'business_details' => [],
+                'urls' => [],
+                'widget_enabled' => false,
+                'allowed_origins' => [],
+                'widget_security_version' => 1,
+                'brand_color' => null,
+                'accent_color' => null,
+                'logo_url' => null,
+                'intro_message' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.bot_name', 'Kuda Test')
+            ->assertJsonPath('settings.prompt_settings.intro_message', null)
+            ->assertJsonPath('settings.allowed_origins', [])
+            ->assertJsonPath('settings.widget_security_version', 1);
+
+        $settings = ClientSetting::query()->where('client_id', $client->id)->firstOrFail();
+        $this->assertSame('Kuda Test', $settings->bot_name);
+        $this->assertSame(['intro_message' => null], $settings->prompt_settings);
+        $this->assertNull($settings->brand_color);
+        $this->assertNull($settings->accent_color);
+        $this->assertNull($settings->logo_url);
+    }
+
+    public function test_admin_put_settings_creates_client_settings_row_when_missing(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $this->assertDatabaseMissing('client_settings', ['client_id' => $client->id]);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings', [
+                'bot_name' => 'Created On Save',
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.bot_name', 'Created On Save')
+            ->assertJsonPath('settings.widget_security_version', 1);
+
+        $this->assertDatabaseHas('client_settings', [
+            'client_id' => $client->id,
+            'bot_name' => 'Created On Save',
+            'widget_security_version' => 1,
+        ]);
+    }
+
     public function test_embed_code_snippet_contract_is_stable(): void
     {
         config()->set('widget.script_url', 'https://api.example.com/widget.js');
@@ -172,4 +258,3 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $this->assertStringContainsString('data-widget-security-version="5"', $snippet);
     }
 }
-

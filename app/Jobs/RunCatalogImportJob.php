@@ -135,7 +135,7 @@ class RunCatalogImportJob implements ShouldQueue
                         'updated_at' => now(),
                     ])],
                     ['client_id', 'source', 'normalized_title_hash', 'price', 'currency', 'sold_at_key'],
-                    ['title', 'description', 'sold_at', 'sold_at_key', 'updated_at']
+                    ['title', 'description', 'low_estimate', 'high_estimate', 'sold_at', 'sold_at_key', 'updated_at']
                 );
 
                 if ($exists) {
@@ -158,8 +158,13 @@ class RunCatalogImportJob implements ShouldQueue
                     return;
                 }
 
+                $rowsImported = (int) $totals['inserted'] + (int) $totals['updated'];
+                $finalStatus = $rowsImported > 0
+                    ? CatalogImportStatus::COMPLETED
+                    : CatalogImportStatus::FAILED;
+
                 $import->update([
-                    'status' => CatalogImportStatus::COMPLETED,
+                    'status' => $finalStatus,
                     'totals' => $totals,
                     'errors_count' => count($errors),
                     'errors_sample' => array_slice(array_map(fn ($e) => [
@@ -223,17 +228,26 @@ class RunCatalogImportJob implements ShouldQueue
             return ['ok' => false, 'column' => 'title', 'message' => 'Missing title'];
         }
 
-        $priceMinor = $priceParser->parseToMinorUnits((string) ($record['price'] ?? ''));
-        if ($priceMinor === null) {
-            return ['ok' => false, 'column' => 'price', 'message' => 'Invalid price'];
+        $priceMinor = null;
+        if (isset($record['price']) && trim((string) $record['price']) !== '') {
+            $priceMinor = $priceParser->parseToMinorUnits((string) $record['price']);
+            if ($priceMinor === null) {
+                return ['ok' => false, 'column' => 'price', 'message' => 'Invalid price'];
+            }
         }
 
         $currency = strtoupper(trim((string) ($record['currency'] ?? '')));
-        if ($currency === '' || strlen($currency) !== 3) {
+        if ($currency === '') {
+            $currency = 'GBP';
+        }
+        if (strlen($currency) !== 3) {
             return ['ok' => false, 'column' => 'currency', 'message' => 'Invalid currency'];
         }
 
         $source = strtolower(trim((string) ($record['source'] ?? '')));
+        if ($source === '') {
+            $source = ProductSource::ESTIMATE->value;
+        }
         if (!in_array($source, array_map(fn ($c) => $c->value, ProductSource::cases()), true)) {
             return ['ok' => false, 'column' => 'source', 'message' => 'Invalid source'];
         }
@@ -248,6 +262,44 @@ class RunCatalogImportJob implements ShouldQueue
         }
 
         $description = isset($record['description']) ? trim((string) $record['description']) : null;
+        $lowEstimate = null;
+        $highEstimate = null;
+
+        if (!empty($record['low_estimate'])) {
+            $lowEstimate = $priceParser->parseToMinorUnits((string) $record['low_estimate']);
+            if ($lowEstimate === null) {
+                return ['ok' => false, 'column' => 'low_estimate', 'message' => 'Invalid low_estimate'];
+            }
+        }
+
+        if (!empty($record['high_estimate'])) {
+            $highEstimate = $priceParser->parseToMinorUnits((string) $record['high_estimate']);
+            if ($highEstimate === null) {
+                return ['ok' => false, 'column' => 'high_estimate', 'message' => 'Invalid high_estimate'];
+            }
+        }
+
+        if (($lowEstimate === null) xor ($highEstimate === null)) {
+            return ['ok' => false, 'column' => 'high_estimate', 'message' => 'Provide both low_estimate and high_estimate'];
+        }
+
+        if ($lowEstimate !== null && $highEstimate !== null && $lowEstimate > $highEstimate) {
+            return ['ok' => false, 'column' => 'high_estimate', 'message' => 'high_estimate must be >= low_estimate'];
+        }
+
+        if ($priceMinor === null && !($lowEstimate !== null && $highEstimate !== null)) {
+            return ['ok' => false, 'column' => 'price', 'message' => 'Provide price or both low_estimate and high_estimate'];
+        }
+
+        if ($priceMinor === null && $lowEstimate !== null && $highEstimate !== null) {
+            $priceMinor = (int) round(($lowEstimate + $highEstimate) / 2);
+        }
+
+        if ($source === ProductSource::SOLD->value) {
+            $lowEstimate = null;
+            $highEstimate = null;
+        }
+
         $normalizedText = strtolower(trim(preg_replace('/\s+/', ' ', trim($title . ' ' . ($description ?? ''))) ?? ''));
         $normalizedTitleHash = hash('sha256', strtolower(trim(preg_replace('/\s+/', ' ', $title) ?? '')));
 
@@ -258,6 +310,8 @@ class RunCatalogImportJob implements ShouldQueue
                 'description' => $description !== '' ? $description : null,
                 'source' => $source,
                 'price' => $priceMinor,
+                'low_estimate' => $lowEstimate,
+                'high_estimate' => $highEstimate,
                 'currency' => $currency,
                 'sold_at' => $soldAt,
                 'sold_at_key' => $soldAt ?? self::EPOCH,

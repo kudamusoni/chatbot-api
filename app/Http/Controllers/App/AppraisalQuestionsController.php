@@ -145,8 +145,7 @@ class AppraisalQuestionsController extends Controller
             ->where('id', $id)
             ->firstOrFail();
 
-        $question->is_active = false;
-        $question->save();
+        $question->delete();
 
         return response()->json(['ok' => true]);
     }

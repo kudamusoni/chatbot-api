@@ -20,9 +20,9 @@ return new class extends Migration
             $table->uuid('client_id');
             $table->string('title');
             $table->text('description')->nullable();
-            $table->string('source'); // sold, asking, estimate
+            $table->string('source')->nullable(); // sold, asking, estimate
             $table->integer('price'); // in cents/pence for precision
-            $table->string('currency', 3)->default('GBP');
+            $table->string('currency', 3)->nullable();
             $table->timestamp('sold_at')->nullable();
             $table->text('normalized_text'); // lowercase title+description for search
             $table->timestamps();
@@ -37,7 +37,7 @@ return new class extends Migration
 
         // Create trigram index for fast ILIKE search
         DB::statement('
-            CREATE INDEX product_catalog_normalized_text_trgm 
+            CREATE INDEX product_catalog_normalized_text_trgm
             ON product_catalog USING gin (normalized_text gin_trgm_ops)
         ');
     }

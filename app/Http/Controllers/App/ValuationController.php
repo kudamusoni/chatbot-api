@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\App;
 
 use App\Http\Controllers\Controller;
+use App\Models\Lead;
 use App\Models\Valuation;
 use App\Support\CurrentClient;
 use App\Support\DashboardListDefaults;
@@ -58,7 +59,18 @@ class ValuationController extends Controller
             ->where('id', $id)
             ->firstOrFail();
 
-        return response()->json(['data' => ValuationPresenter::detail($valuation)]);
+        $leadId = Lead::query()
+            ->where('client_id', $currentClient->id())
+            ->where('conversation_id', $valuation->conversation_id)
+            ->orderByDesc('created_at')
+            ->value('id');
+
+        return response()->json([
+            'data' => array_merge(ValuationPresenter::detail($valuation), [
+                'lead_id' => $leadId,
+                'conversation_id' => $valuation->conversation_id,
+            ]),
+        ]);
     }
 
     private function applyRange($query, string $range, string $column): void

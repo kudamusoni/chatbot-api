@@ -10,6 +10,8 @@ enum CatalogMappingField: string
     case SOURCE = 'source';
     case DESCRIPTION = 'description';
     case SOLD_AT = 'sold_at';
+    case LOW_ESTIMATE = 'low_estimate';
+    case HIGH_ESTIMATE = 'high_estimate';
 
     public function key(): string
     {
@@ -27,9 +29,6 @@ enum CatalogMappingField: string
     {
         return [
             self::TITLE->key(),
-            self::PRICE->key(),
-            self::CURRENCY->key(),
-            self::SOURCE->key(),
         ];
     }
 
@@ -37,8 +36,13 @@ enum CatalogMappingField: string
     public static function optionalKeys(): array
     {
         return [
+            self::PRICE->key(),
+            self::CURRENCY->key(),
+            self::SOURCE->key(),
             self::DESCRIPTION->key(),
             self::SOLD_AT->key(),
+            self::LOW_ESTIMATE->key(),
+            self::HIGH_ESTIMATE->key(),
         ];
     }
 }

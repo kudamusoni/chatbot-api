@@ -149,6 +149,58 @@ class Phase3CriticalLocksTest extends TestCase
         $this->assertSame(['m1', 'm2', 'm3'], array_column($response->json('data'), 'content'));
     }
 
+    public function test_conversation_messages_response_includes_lead_id_and_valuation_id(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $viewer = User::factory()->create();
+        $viewer->clients()->attach($client->id, ['role' => 'viewer']);
+
+        [$conversation] = Conversation::createWithToken($client->id);
+
+        $event = ConversationEvent::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'type' => ConversationEventType::USER_MESSAGE_CREATED,
+            'payload' => ['content' => 'hello'],
+        ]);
+
+        $message = ConversationMessage::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'event_id' => $event->id,
+            'role' => 'user',
+            'content' => 'hello',
+        ]);
+
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'John Smith',
+            'email' => 'john.smith@gmail.com',
+            'email_hash' => hash('sha256', 'john.smith@gmail.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
+
+        $valuation = Valuation::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'status' => ValuationStatus::PENDING,
+            'snapshot_hash' => hash('sha256', 'snapshot'),
+            'input_snapshot' => ['maker' => 'Acme'],
+            'result' => null,
+        ]);
+
+        $this->actingAs($viewer, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/conversations/' . $conversation->id . '/messages')
+            ->assertOk()
+            ->assertJsonPath('lead_id', $lead->id)
+            ->assertJsonPath('valuation_id', $valuation->id);
+    }
+
     public function test_valuations_include_currency_and_minor_unit_ints(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
@@ -195,5 +247,65 @@ class Phase3CriticalLocksTest extends TestCase
         $this->assertIsInt($detail->json('data.range_high'));
         $this->assertGreaterThanOrEqual(0, (float) $detail->json('data.confidence'));
         $this->assertLessThanOrEqual(1, (float) $detail->json('data.confidence'));
+    }
+
+    public function test_valuation_detail_includes_lead_id_and_conversation_id_only(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $viewer = User::factory()->create();
+        $viewer->clients()->attach($client->id, ['role' => 'viewer']);
+
+        [$conversation] = Conversation::createWithToken($client->id);
+
+        $event = ConversationEvent::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'type' => ConversationEventType::USER_MESSAGE_CREATED,
+            'payload' => ['content' => 'Need valuation'],
+        ]);
+
+        ConversationMessage::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'event_id' => $event->id,
+            'role' => 'user',
+            'content' => 'Need valuation',
+        ]);
+
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Lead Person',
+            'email' => 'lead@example.com',
+            'email_hash' => hash('sha256', 'lead@example.com'),
+            'phone_raw' => '+447700900999',
+            'phone_normalized' => '+447700900999',
+            'phone_hash' => hash('sha256', '+447700900999'),
+            'status' => 'REQUESTED',
+        ]);
+
+        $valuation = Valuation::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'status' => ValuationStatus::COMPLETED,
+            'snapshot_hash' => hash('sha256', 'xyz'),
+            'input_snapshot' => ['currency' => 'GBP'],
+            'result' => [
+                'count' => 3,
+                'median' => 10000,
+                'range' => ['low' => 9000, 'high' => 12000],
+                'confidence' => 0.8,
+            ],
+        ]);
+
+        $this->actingAs($viewer, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/valuations/' . $valuation->id)
+            ->assertOk()
+            ->assertJsonPath('data.lead_id', $lead->id)
+            ->assertJsonPath('data.conversation_id', $conversation->id)
+            ->assertJsonMissingPath('data.lead')
+            ->assertJsonMissingPath('data.messages')
+            ->assertJsonMissingPath('data.message_ids');
     }
 }

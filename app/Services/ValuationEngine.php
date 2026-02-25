@@ -67,8 +67,12 @@ class ValuationEngine
             'estimates' => $comps->where('source', ProductSource::ESTIMATE)->count(),
         ];
 
-        // 4. Extract prices (in cents/pence)
-        $prices = $comps->pluck('price')->sort()->values()->all();
+        // 4. Extract effective prices (in cents/pence).
+        // Estimate comps use low/high midpoint when both values exist.
+        $prices = $comps->map(fn (ProductCatalog $comp) => $this->effectivePrice($comp))
+            ->sort()
+            ->values()
+            ->all();
         $count = count($prices);
 
         // 5. Compute median
@@ -108,9 +112,23 @@ class ValuationEngine
 
         return $sorted->take(self::SAMPLE_SIZE)->map(fn ($comp) => [
             'title' => $comp->title,
-            'price' => $comp->price,
+            'price' => $this->effectivePrice($comp),
             'source' => $comp->source->value,
+            'low_estimate' => $comp->low_estimate,
+            'high_estimate' => $comp->high_estimate,
         ])->values()->all();
+    }
+
+    private function effectivePrice(ProductCatalog $comp): int
+    {
+        if ($comp->source === ProductSource::ESTIMATE
+            && $comp->low_estimate !== null
+            && $comp->high_estimate !== null
+        ) {
+            return (int) round(((int) $comp->low_estimate + (int) $comp->high_estimate) / 2);
+        }
+
+        return (int) $comp->price;
     }
 
     /**

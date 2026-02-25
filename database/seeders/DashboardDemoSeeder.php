@@ -43,11 +43,10 @@ class DashboardDemoSeeder extends Seeder
         }
 
         $settings = ClientSetting::forClientOrCreate($client->id);
-        $urls = is_array($settings->urls) ? $settings->urls : [];
 
         if ($this->reset) {
             $this->resetClientData($client->id);
-        } elseif (($urls['demo_seed_version'] ?? null) === self::SEED_VERSION) {
+        } elseif ($this->alreadySeeded($client->id)) {
             // Locked behavior: without --reset seeding is idempotent.
             return;
         }
@@ -215,7 +214,6 @@ class DashboardDemoSeeder extends Seeder
 
         $settings->bot_name = 'Demo Assistant';
         $settings->allowed_origins = ['https://demo.example.com'];
-        $settings->urls = array_merge($urls, ['demo_seed_version' => self::SEED_VERSION]);
         $settings->widget_security_version = max(1, (int) $settings->widget_security_version);
         $settings->save();
 
@@ -237,5 +235,13 @@ class DashboardDemoSeeder extends Seeder
         ConversationMessage::query()->where('client_id', $clientId)->delete();
         ConversationEvent::query()->where('client_id', $clientId)->delete();
         Conversation::query()->where('client_id', $clientId)->delete();
+    }
+
+    private function alreadySeeded(string $clientId): bool
+    {
+        return CatalogImport::query()
+            ->where('client_id', $clientId)
+            ->where('file_path', 'catalog-imports/' . $clientId . '/demo-completed.csv')
+            ->exists();
     }
 }

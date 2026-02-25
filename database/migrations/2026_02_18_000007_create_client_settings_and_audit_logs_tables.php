@@ -12,10 +12,11 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->uuid('client_id')->unique();
             $table->string('bot_name')->nullable();
-            $table->json('colors')->nullable();
+            $table->string('brand_color')->nullable();
+            $table->string('accent_color')->nullable();
+            $table->string('logo_url')->nullable();
             $table->json('prompt_settings')->nullable();
             $table->json('business_details')->nullable();
-            $table->json('urls')->nullable();
             $table->boolean('widget_enabled')->default(true);
             $table->json('allowed_origins')->nullable();
             $table->unsignedInteger('widget_security_version')->default(1);

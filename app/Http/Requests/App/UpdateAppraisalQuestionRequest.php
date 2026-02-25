@@ -19,7 +19,7 @@ class UpdateAppraisalQuestionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'key' => ['sometimes', 'string', 'regex:/^[a-z0-9_]{2,64}$/'],
+            'key' => ['sometimes', 'string', 'regex:/^[a-z0-9_]{2,64}$/', Rule::in(AppraisalQuestion::ALLOWED_KEYS)],
             'question' => ['sometimes', 'string', 'max:500'],
             'type' => ['sometimes', 'string', Rule::in(AppraisalQuestion::TYPES)],
             'options' => ['nullable', 'array', 'min:1', 'max:100'],

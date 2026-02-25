@@ -20,6 +20,8 @@ class ProductCatalog extends Model
         'description',
         'source',
         'price',
+        'low_estimate',
+        'high_estimate',
         'currency',
         'sold_at',
         'sold_at_key',
@@ -32,6 +34,8 @@ class ProductCatalog extends Model
         return [
             'source' => ProductSource::class,
             'price' => 'integer',
+            'low_estimate' => 'integer',
+            'high_estimate' => 'integer',
             'sold_at' => 'datetime',
             'sold_at_key' => 'datetime',
         ];

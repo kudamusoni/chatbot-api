@@ -8,6 +8,7 @@ use App\Http\Controllers\App\ClientContextController;
 use App\Http\Controllers\App\ConversationController;
 use App\Http\Controllers\App\EmbedCodeController;
 use App\Http\Controllers\App\LeadController as AppLeadController;
+use App\Http\Controllers\App\ProductCatalogController;
 use App\Http\Controllers\App\SettingsController;
 use App\Http\Controllers\App\ValuationController;
 use Illuminate\Support\Facades\Route;
@@ -37,6 +38,7 @@ Route::prefix('app')
 
         Route::middleware(['app.auth', 'set.current.client'])->group(function () {
             Route::get('appraisal-questions', [AppraisalQuestionsController::class, 'index']);
+            Route::get('settings/appraisal-questions', [AppraisalQuestionsController::class, 'index']);
             Route::get('leads', [AppLeadController::class, 'index']);
             Route::get('leads/export', [AppLeadController::class, 'export']);
             Route::get('leads/{id}', [AppLeadController::class, 'show']);
@@ -52,12 +54,18 @@ Route::prefix('app')
             Route::get('catalog-imports', [CatalogImportController::class, 'index']);
             Route::get('catalog-imports/{catalogImportId}', [CatalogImportController::class, 'show']);
             Route::get('catalog-imports/{catalogImportId}/errors', [CatalogImportController::class, 'errors']);
+            Route::get('products', [ProductCatalogController::class, 'index']);
+            Route::get('products/{id}', [ProductCatalogController::class, 'show']);
 
             Route::middleware('require.tenant.role:owner,admin')->group(function () {
                 Route::put('appraisal-questions/reorder', [AppraisalQuestionsController::class, 'reorder']);
                 Route::post('appraisal-questions', [AppraisalQuestionsController::class, 'store']);
                 Route::put('appraisal-questions/{id}', [AppraisalQuestionsController::class, 'update']);
                 Route::delete('appraisal-questions/{id}', [AppraisalQuestionsController::class, 'destroy']);
+                Route::put('settings/appraisal-questions/reorder', [AppraisalQuestionsController::class, 'reorder']);
+                Route::post('settings/appraisal-questions', [AppraisalQuestionsController::class, 'store']);
+                Route::put('settings/appraisal-questions/{id}', [AppraisalQuestionsController::class, 'update']);
+                Route::delete('settings/appraisal-questions/{id}', [AppraisalQuestionsController::class, 'destroy']);
                 Route::patch('leads/{id}', [AppLeadController::class, 'update']);
                 Route::put('settings', [SettingsController::class, 'update']);
                 Route::put('settings/domains', [SettingsController::class, 'updateDomains']);

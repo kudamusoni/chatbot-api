@@ -42,15 +42,31 @@ class SettingsController extends Controller
         ];
 
         $validated = $request->validated();
-        $clientData = $validated['client'] ?? [];
-        if (array_key_exists('name', $clientData) && $clientData['name'] !== null) {
-            $client->name = (string) $clientData['name'];
+        if (array_key_exists('client_name', $validated) && $validated['client_name'] !== null) {
+            $client->name = (string) $validated['client_name'];
             $client->save();
         }
 
-        $settingsData = $validated['settings'] ?? [];
-        // Locked allowlist for forward-compatible unknown key ignore.
+        $settingsData = [];
         $allowlist = ['bot_name', 'brand_color', 'accent_color', 'logo_url', 'prompt_settings'];
+        foreach ($allowlist as $key) {
+            if (array_key_exists($key, $validated)) {
+                $settingsData[$key] = $validated[$key];
+            }
+        }
+
+        if (array_key_exists('intro_message', $validated)) {
+            $basePromptSettings = [];
+            if (array_key_exists('prompt_settings', $settingsData) && is_array($settingsData['prompt_settings'])) {
+                $basePromptSettings = $settingsData['prompt_settings'];
+            } elseif (is_array($settings->prompt_settings)) {
+                $basePromptSettings = $settings->prompt_settings;
+            }
+
+            $basePromptSettings['intro_message'] = $validated['intro_message'];
+            $settingsData['prompt_settings'] = $basePromptSettings;
+        }
+
         $filtered = array_intersect_key($settingsData, array_flip($allowlist));
 
         foreach ($filtered as $key => $value) {

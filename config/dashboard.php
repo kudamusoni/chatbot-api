@@ -12,6 +12,7 @@ return [
         'catalog_imports' => ['column' => 'catalog_imports.created_at', 'direction' => 'desc'],
         'conversations' => ['column' => 'conversations.last_activity_at', 'direction' => 'desc'],
         'valuations' => ['column' => 'valuations.created_at', 'direction' => 'desc'],
+        'products' => ['column' => 'product_catalog.created_at', 'direction' => 'desc'],
         'appraisal_questions' => ['column' => 'appraisal_questions.order_index', 'direction' => 'asc'],
     ],
 ];

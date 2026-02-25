@@ -346,6 +346,27 @@ class ValuationEngineTest extends TestCase
         }
     }
 
+    public function test_estimate_low_high_midpoint_is_used_when_present(): void
+    {
+        ProductCatalog::create([
+            'client_id' => $this->client->id,
+            'title' => 'Royal Doulton Estimate Range',
+            'source' => ProductSource::ESTIMATE,
+            'price' => 5000, // should be ignored when range exists
+            'low_estimate' => 10000,
+            'high_estimate' => 20000,
+            'currency' => 'GBP',
+        ]);
+
+        $result = $this->engine->compute($this->client->id, ['maker' => 'Royal Doulton']);
+
+        $this->assertSame(1, $result['count']);
+        $this->assertSame(15000, $result['median']);
+        $this->assertSame(['low' => 15000, 'high' => 15000], $result['range']);
+        $this->assertSame(10000, $result['matched_comps_sample'][0]['low_estimate']);
+        $this->assertSame(20000, $result['matched_comps_sample'][0]['high_estimate']);
+    }
+
     /**
      * Helper to create a product catalog item.
      */

@@ -16,14 +16,14 @@ Returns:
 - `settings { bot_name, brand_color, accent_color, logo_url, prompt_settings, allowed_origins, widget_security_version }`
 
 ### PUT `/app/settings`
-Allowed `settings` keys (others ignored for forward compatibility):
+Flat payload contract (others ignored for forward compatibility):
+- `client_name`
 - `bot_name`
 - `brand_color`
 - `accent_color`
 - `logo_url`
 - `prompt_settings` (replace entire object when provided)
-
-Can also update `client.name`.
+- `intro_message` (stored at `prompt_settings.intro_message`)
 
 Note:
 - Domains are managed only via `PUT /app/settings/domains`.

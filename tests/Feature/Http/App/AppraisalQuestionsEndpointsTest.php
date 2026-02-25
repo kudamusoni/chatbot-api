@@ -30,7 +30,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
 
         AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'hidden_question',
+            'key' => 'condition',
             'label' => 'Hidden',
             'input_type' => 'text',
             'required' => false,
@@ -63,7 +63,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
 
         AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'a',
+            'key' => 'maker',
             'label' => 'A',
             'input_type' => 'text',
             'required' => true,
@@ -73,7 +73,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
 
         AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'b',
+            'key' => 'age',
             'label' => 'B',
             'input_type' => 'text',
             'required' => false,
@@ -88,6 +88,29 @@ class AppraisalQuestionsEndpointsTest extends TestCase
             ->assertJsonCount(2, 'data');
     }
 
+    public function test_settings_prefixed_route_alias_returns_questions(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $viewer = User::factory()->create();
+        $viewer->clients()->attach($client->id, ['role' => 'viewer']);
+
+        AppraisalQuestion::create([
+            'client_id' => $client->id,
+            'key' => 'maker',
+            'label' => 'Who made it?',
+            'input_type' => 'text',
+            'required' => true,
+            'order_index' => 1,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($viewer, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/settings/appraisal-questions?include_inactive=false')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+    }
+
     public function test_viewer_cannot_write_questions(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
@@ -97,7 +120,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
         $this->actingAs($viewer, 'web')
             ->withSession(['active_client_id' => $client->id])
             ->postJson('/app/appraisal-questions', [
-                'key' => 'brand',
+                'key' => 'maker',
                 'question' => 'Brand?',
                 'type' => 'text',
             ])
@@ -106,6 +129,23 @@ class AppraisalQuestionsEndpointsTest extends TestCase
                 'error' => 'FORBIDDEN',
                 'reason_code' => 'INSUFFICIENT_ROLE',
             ]);
+    }
+
+    public function test_unknown_key_is_rejected(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->postJson('/app/appraisal-questions', [
+                'key' => 'brand',
+                'question' => 'Brand?',
+                'type' => 'text',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['key']);
     }
 
     public function test_admin_can_create_and_order_is_one_based_append(): void
@@ -197,7 +237,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
             ->assertJsonValidationErrors(['key']);
     }
 
-    public function test_delete_deactivates_question(): void
+    public function test_delete_hard_deletes_question(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
         $admin = User::factory()->create();
@@ -219,8 +259,10 @@ class AppraisalQuestionsEndpointsTest extends TestCase
             ->assertOk()
             ->assertJson(['ok' => true]);
 
-        $question->refresh();
-        $this->assertFalse((bool) $question->is_active);
+        $this->assertDatabaseMissing('appraisal_questions', [
+            'id' => $question->id,
+            'client_id' => $client->id,
+        ]);
     }
 
     public function test_reorder_compacts_active_only_and_inactive_unchanged(): void
@@ -231,7 +273,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
 
         $q1 = AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'q1',
+            'key' => 'maker',
             'label' => 'Q1',
             'input_type' => 'text',
             'required' => true,
@@ -240,7 +282,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
         ]);
         $inactive = AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'q2',
+            'key' => 'age',
             'label' => 'Q2',
             'input_type' => 'text',
             'required' => true,
@@ -249,7 +291,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
         ]);
         $q3 = AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'q3',
+            'key' => 'material',
             'label' => 'Q3',
             'input_type' => 'text',
             'required' => true,
@@ -282,7 +324,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
 
         $q1 = AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'q1',
+            'key' => 'maker',
             'label' => 'Q1',
             'input_type' => 'text',
             'required' => true,
@@ -291,7 +333,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
         ]);
         AppraisalQuestion::create([
             'client_id' => $client->id,
-            'key' => 'q2',
+            'key' => 'condition',
             'label' => 'Q2',
             'input_type' => 'text',
             'required' => true,
@@ -318,7 +360,7 @@ class AppraisalQuestionsEndpointsTest extends TestCase
 
         $otherQuestion = AppraisalQuestion::create([
             'client_id' => $clientB->id,
-            'key' => 'other',
+            'key' => 'size',
             'label' => 'Other',
             'input_type' => 'text',
             'required' => true,

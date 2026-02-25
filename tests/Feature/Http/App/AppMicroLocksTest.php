@@ -207,4 +207,193 @@ class AppMicroLocksTest extends TestCase
         $this->assertCount(5, $response->json('data'));
         $this->assertSame('created_at:desc', $response->json('meta.default_sort'));
     }
+
+    public function test_leads_list_applies_status_and_range_filters(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'viewer']);
+        [$conversation] = Conversation::createWithToken($client->id);
+
+        $recentRequested = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Recent Requested',
+            'email' => 'recent-requested@example.com',
+            'phone_raw' => '+441234567890',
+            'phone_normalized' => '+441234567890',
+            'status' => 'REQUESTED',
+        ]);
+
+        $oldRequested = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Old Requested',
+            'email' => 'old-requested@example.com',
+            'phone_raw' => '+441234567890',
+            'phone_normalized' => '+441234567890',
+            'status' => 'REQUESTED',
+        ]);
+
+        $recentContacted = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Recent Contacted',
+            'email' => 'recent-contacted@example.com',
+            'phone_raw' => '+441234567890',
+            'phone_normalized' => '+441234567890',
+            'status' => 'CONTACTED',
+        ]);
+
+        DB::table('leads')->where('id', $recentRequested->id)->update([
+            'created_at' => Carbon::now('UTC')->subDays(2),
+            'updated_at' => Carbon::now('UTC')->subDays(2),
+        ]);
+        DB::table('leads')->where('id', $oldRequested->id)->update([
+            'created_at' => Carbon::now('UTC')->subDays(45),
+            'updated_at' => Carbon::now('UTC')->subDays(45),
+        ]);
+        DB::table('leads')->where('id', $recentContacted->id)->update([
+            'created_at' => Carbon::now('UTC')->subDays(1),
+            'updated_at' => Carbon::now('UTC')->subDays(1),
+        ]);
+
+        $response = $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/leads?page=1&per_page=20&status=REQUESTED&range=30d')
+            ->assertOk();
+
+        $data = $response->json('data');
+        $this->assertCount(1, $data);
+        $this->assertSame('Recent Requested', $data[0]['name']);
+        $this->assertSame('REQUESTED', $data[0]['status']);
+    }
+
+    public function test_leads_list_applies_q_search_filter(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'viewer']);
+        [$conversation] = Conversation::createWithToken($client->id);
+
+        Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Lead 9',
+            'email' => 'lead9@example.com',
+            'phone_raw' => '+441234567890',
+            'phone_normalized' => '+441234567890',
+            'status' => 'REQUESTED',
+            'notes' => 'Important note',
+        ]);
+
+        Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Another Lead',
+            'email' => 'lead10@example.com',
+            'phone_raw' => '+441234567890',
+            'phone_normalized' => '+441234567890',
+            'status' => 'CONTACTED',
+        ]);
+
+        $response = $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/leads?page=1&per_page=20&q=Lead+9&range=all')
+            ->assertOk();
+
+        $data = $response->json('data');
+        $this->assertCount(1, $data);
+        $this->assertSame('Lead 9', $data[0]['name']);
+    }
+
+    public function test_catalog_imports_list_applies_range_filter(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'viewer']);
+
+        $todayImport = CatalogImport::create([
+            'client_id' => $client->id,
+            'created_by' => $user->id,
+            'status' => 'CREATED',
+            'attempt' => 1,
+        ]);
+
+        $oldImport = CatalogImport::create([
+            'client_id' => $client->id,
+            'created_by' => $user->id,
+            'status' => 'CREATED',
+            'attempt' => 1,
+        ]);
+
+        DB::table('catalog_imports')->where('id', $todayImport->id)->update([
+            'created_at' => Carbon::now('UTC')->subHours(2),
+            'updated_at' => Carbon::now('UTC')->subHours(2),
+        ]);
+        DB::table('catalog_imports')->where('id', $oldImport->id)->update([
+            'created_at' => Carbon::now('UTC')->subDays(2),
+            'updated_at' => Carbon::now('UTC')->subDays(2),
+        ]);
+
+        $response = $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/catalog-imports?page=1&per_page=20&range=today')
+            ->assertOk();
+
+        $data = $response->json('data');
+        $this->assertCount(1, $data);
+        $this->assertSame($todayImport->id, $data[0]['id']);
+    }
+
+    public function test_catalog_imports_list_applies_status_and_range_filters(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'viewer']);
+
+        $todayRunning = CatalogImport::create([
+            'client_id' => $client->id,
+            'created_by' => $user->id,
+            'status' => 'RUNNING',
+            'attempt' => 1,
+        ]);
+
+        $todayCompleted = CatalogImport::create([
+            'client_id' => $client->id,
+            'created_by' => $user->id,
+            'status' => 'COMPLETED',
+            'attempt' => 1,
+        ]);
+
+        $oldRunning = CatalogImport::create([
+            'client_id' => $client->id,
+            'created_by' => $user->id,
+            'status' => 'RUNNING',
+            'attempt' => 1,
+        ]);
+
+        DB::table('catalog_imports')->where('id', $todayRunning->id)->update([
+            'created_at' => Carbon::now('UTC')->subHours(1),
+            'updated_at' => Carbon::now('UTC')->subHours(1),
+        ]);
+        DB::table('catalog_imports')->where('id', $todayCompleted->id)->update([
+            'created_at' => Carbon::now('UTC')->subHours(1),
+            'updated_at' => Carbon::now('UTC')->subHours(1),
+        ]);
+        DB::table('catalog_imports')->where('id', $oldRunning->id)->update([
+            'created_at' => Carbon::now('UTC')->subDays(3),
+            'updated_at' => Carbon::now('UTC')->subDays(3),
+        ]);
+
+        $response = $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/catalog-imports?page=1&per_page=20&status=RUNNING&range=today')
+            ->assertOk();
+
+        $data = $response->json('data');
+        $this->assertCount(1, $data);
+        $this->assertSame($todayRunning->id, $data[0]['id']);
+        $this->assertSame('RUNNING', $data[0]['status']);
+    }
 }

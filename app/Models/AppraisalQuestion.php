@@ -11,6 +11,7 @@ class AppraisalQuestion extends Model
     use HasUuids;
 
     public const TYPES = ['text', 'number', 'select', 'yes_no'];
+    public const ALLOWED_KEYS = ['maker', 'condition', 'item_type', 'age', 'size', 'material'];
 
     protected $fillable = [
         'client_id',

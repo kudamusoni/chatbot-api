@@ -17,6 +17,7 @@ class LeadPresenter
             'id' => $lead->id,
             'conversation_id' => $lead->conversation_id,
             'name' => self::nameForViewer($lead->name, $viewer),
+            'email' => self::emailForViewer((string) $lead->email, $viewer),
             'status' => $lead->status,
             'created_at' => self::formatUtc($lead->created_at),
         ];

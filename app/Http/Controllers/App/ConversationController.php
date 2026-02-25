@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\ConversationMessage;
+use App\Models\Lead;
+use App\Models\Valuation;
 use App\Support\ConversationMessagePresenter;
 use App\Support\CurrentClient;
 use App\Support\DashboardListDefaults;
@@ -98,7 +100,23 @@ class ConversationController extends Controller
             ->map(fn (ConversationMessage $message) => ConversationMessagePresenter::present($message))
             ->values();
 
-        return response()->json(['data' => $messages]);
+        $leadId = Lead::query()
+            ->where('client_id', $currentClient->id())
+            ->where('conversation_id', $id)
+            ->orderByDesc('created_at')
+            ->value('id');
+
+        $valuationId = Valuation::query()
+            ->where('client_id', $currentClient->id())
+            ->where('conversation_id', $id)
+            ->orderByDesc('created_at')
+            ->value('id');
+
+        return response()->json([
+            'data' => $messages,
+            'lead_id' => $leadId,
+            'valuation_id' => $valuationId,
+        ]);
     }
 
     public function events(Request $request, string $id): JsonResponse
