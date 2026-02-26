@@ -190,9 +190,7 @@ class LeadController extends Controller
         $query->where(function ($q) use ($needle): void {
             $q->whereRaw('LOWER(name) LIKE ?', [$needle])
                 ->orWhereRaw('LOWER(status) LIKE ?', [$needle])
-                ->orWhereRaw('LOWER(COALESCE(notes, \'\')) LIKE ?', [$needle])
-                ->orWhereRaw('LOWER(id::text) LIKE ?', [$needle])
-                ->orWhereRaw('LOWER(conversation_id::text) LIKE ?', [$needle]);
+                ->orWhereRaw('LOWER(COALESCE(notes, \'\')) LIKE ?', [$needle]);
         });
     }
 }

@@ -12,10 +12,8 @@ use App\Models\Valuation;
 use App\Support\ConversationMessagePresenter;
 use App\Support\CurrentClient;
 use App\Support\DashboardListDefaults;
-use App\Support\DashboardRange;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\ValidationException;
 
 class ConversationController extends Controller
 {
@@ -48,9 +46,6 @@ class ConversationController extends Controller
                     ->select('status');
             }, 'valuation_status');
 
-        $range = (string) $request->query('range', 'all');
-        $this->applyRange($query, $range, 'last_activity_at');
-
         if ($request->filled('state')) {
             $query->where('state', (string) $request->query('state'));
         }
@@ -58,7 +53,7 @@ class ConversationController extends Controller
         if ($request->filled('q')) {
             $term = trim((string) $request->query('q'));
             $query->where(function ($q) use ($term): void {
-                $q->where('conversations.id', 'like', "%{$term}%")
+                $q->where('conversations.state', 'ilike', "%{$term}%")
                     ->orWhereExists(function ($sub) use ($term) {
                         $sub->selectRaw('1')
                             ->from('conversation_messages')
@@ -154,20 +149,5 @@ class ConversationController extends Controller
             ->values();
 
         return response()->json(['data' => $events]);
-    }
-
-    private function applyRange($query, string $range, string $column): void
-    {
-        try {
-            $parsed = DashboardRange::parse($range);
-        } catch (\InvalidArgumentException) {
-            throw ValidationException::withMessages([
-                'range' => ['The selected range is invalid.'],
-            ]);
-        }
-
-        if ($parsed->from !== null) {
-            $query->whereBetween($column, [$parsed->from, $parsed->to]);
-        }
     }
 }
