@@ -85,12 +85,12 @@ class ProductCatalogEndpointsTest extends TestCase
         ]);
 
         DB::table('product_catalog')->where('id', $match->id)->update([
-            'created_at' => Carbon::now('UTC')->subHours(2),
-            'updated_at' => Carbon::now('UTC')->subHours(2),
+            'created_at' => Carbon::now('UTC')->startOfDay(),
+            'updated_at' => Carbon::now('UTC')->startOfDay(),
         ]);
         DB::table('product_catalog')->where('id', $wrongSource->id)->update([
-            'created_at' => Carbon::now('UTC')->subHours(2),
-            'updated_at' => Carbon::now('UTC')->subHours(2),
+            'created_at' => Carbon::now('UTC')->startOfDay(),
+            'updated_at' => Carbon::now('UTC')->startOfDay(),
         ]);
         DB::table('product_catalog')->where('id', $old->id)->update([
             'created_at' => Carbon::now('UTC')->subDays(3),

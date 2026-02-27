@@ -328,8 +328,8 @@ class AppMicroLocksTest extends TestCase
         ]);
 
         DB::table('catalog_imports')->where('id', $todayImport->id)->update([
-            'created_at' => Carbon::now('UTC')->subHours(2),
-            'updated_at' => Carbon::now('UTC')->subHours(2),
+            'created_at' => Carbon::now('UTC')->startOfDay(),
+            'updated_at' => Carbon::now('UTC')->startOfDay(),
         ]);
         DB::table('catalog_imports')->where('id', $oldImport->id)->update([
             'created_at' => Carbon::now('UTC')->subDays(2),
@@ -374,12 +374,12 @@ class AppMicroLocksTest extends TestCase
         ]);
 
         DB::table('catalog_imports')->where('id', $todayRunning->id)->update([
-            'created_at' => Carbon::now('UTC')->subHours(1),
-            'updated_at' => Carbon::now('UTC')->subHours(1),
+            'created_at' => Carbon::now('UTC')->startOfDay(),
+            'updated_at' => Carbon::now('UTC')->startOfDay(),
         ]);
         DB::table('catalog_imports')->where('id', $todayCompleted->id)->update([
-            'created_at' => Carbon::now('UTC')->subHours(1),
-            'updated_at' => Carbon::now('UTC')->subHours(1),
+            'created_at' => Carbon::now('UTC')->startOfDay(),
+            'updated_at' => Carbon::now('UTC')->startOfDay(),
         ]);
         DB::table('catalog_imports')->where('id', $oldRunning->id)->update([
             'created_at' => Carbon::now('UTC')->subDays(3),

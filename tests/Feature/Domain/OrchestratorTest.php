@@ -306,7 +306,7 @@ class OrchestratorTest extends TestCase
 
         $userEvent = $eventRecorder->recordUserMessage(
             $conversation,
-            'Random text that does not trigger appraisal or lead.'
+            'Hello there, just checking in.'
         )['event'];
 
         $orchestrator->handleUserMessage($conversation, $userEvent);

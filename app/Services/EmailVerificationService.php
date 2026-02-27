@@ -54,20 +54,26 @@ class EmailVerificationService
             return ['ok' => false, 'reason' => 'VERIFY_LINK_EXPIRED'];
         }
 
-        $expectedSignedUrl = URL::temporarySignedRoute(
-            'app.onboarding.verify-email',
-            $expiresAt,
-            [
-                'id' => $id,
-                'hash' => $hash,
-            ],
-            absolute: false
-        );
+        $expectedSignatures = collect([true, false])
+            ->map(function (bool $absolute) use ($expiresAt, $id, $hash): string {
+                $signedUrl = URL::temporarySignedRoute(
+                    'app.onboarding.verify-email',
+                    $expiresAt,
+                    [
+                        'id' => $id,
+                        'hash' => $hash,
+                    ],
+                    absolute: $absolute
+                );
 
-        parse_str((string) parse_url($expectedSignedUrl, PHP_URL_QUERY), $expectedQuery);
-        $expectedSignature = (string) ($expectedQuery['signature'] ?? '');
+                parse_str((string) parse_url($signedUrl, PHP_URL_QUERY), $query);
 
-        if ($expectedSignature === '' || !hash_equals($expectedSignature, $signature)) {
+                return (string) ($query['signature'] ?? '');
+            })
+            ->filter(fn (string $value) => $value !== '')
+            ->values();
+
+        if (!$expectedSignatures->contains(fn (string $expected) => hash_equals($expected, $signature))) {
             return ['ok' => false, 'reason' => 'VERIFY_LINK_INVALID'];
         }
 
