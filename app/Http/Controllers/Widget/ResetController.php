@@ -10,16 +10,16 @@ use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Services\ConversationEventRecorder;
 use App\Services\TurnLifecycleRecorder;
+use App\Services\WidgetIntroMessageResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
 class ResetController extends Controller
 {
-    private const INTRO_MESSAGE = 'Thank you for your message. How can I help you today?';
-
     public function __construct(
         private readonly ConversationEventRecorder $eventRecorder,
-        private readonly TurnLifecycleRecorder $turnLifecycle
+        private readonly TurnLifecycleRecorder $turnLifecycle,
+        private readonly WidgetIntroMessageResolver $introMessageResolver
     ) {}
 
     /**
@@ -33,6 +33,7 @@ class ResetController extends Controller
         $sessionToken = $request->validated('session_token');
         $actionId = $request->validated('action_id');
         $introIdempotencyKey = "reset:{$actionId}:intro";
+        $fallbackMessage = $this->introMessageResolver->forFallback((string) $clientId);
 
         $conversation = Conversation::findByTokenForClient($sessionToken, $clientId);
 
@@ -62,7 +63,7 @@ class ResetController extends Controller
         $startedAt = microtime(true);
 
         try {
-            $conversation = DB::transaction(function () use ($conversation, $actionId, $introIdempotencyKey) {
+            $conversation = DB::transaction(function () use ($conversation, $actionId, $introIdempotencyKey, $fallbackMessage) {
                 // Clear chat/event history while preserving the conversation and linked leads/valuations.
                 DB::table('conversation_events')
                     ->where('conversation_id', $conversation->id)
@@ -86,7 +87,7 @@ class ResetController extends Controller
                 $this->eventRecorder->record(
                     $conversation,
                     ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-                    ['content' => self::INTRO_MESSAGE],
+                    ['content' => $fallbackMessage],
                     idempotencyKey: $introIdempotencyKey,
                     correlationId: $actionId
                 );

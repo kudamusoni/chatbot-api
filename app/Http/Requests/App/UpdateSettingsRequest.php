@@ -23,8 +23,10 @@ class UpdateSettingsRequest extends FormRequest
             'logo_url' => ['nullable', 'url', 'max:500'],
             'prompt_settings' => ['nullable', 'array'],
 
-            // Flat additive prompt alias.
-            'intro_message' => ['nullable', 'string', 'max:2000'],
+            // Flat additive prompt aliases.
+            'fallback_message' => ['nullable', 'string', 'max:2000'],
+            'preset_questions' => ['nullable', 'array'],
+            'preset_questions.*' => ['nullable', 'string', 'max:160'],
         ];
     }
 }

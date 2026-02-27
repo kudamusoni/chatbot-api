@@ -19,7 +19,7 @@ class ResetTest extends TestCase
 {
     use RefreshDatabase, InteractsWithConversations;
 
-    public function test_reset_clears_existing_chat_data_and_starts_with_intro_message_without_deleting_leads_or_valuations(): void
+    public function test_reset_clears_existing_chat_data_and_starts_with_fallback_message_without_deleting_leads_or_valuations(): void
     {
         $client = $this->makeClient();
         [$conversation, $token] = $this->makeConversation($client, [
@@ -89,7 +89,7 @@ class ResetTest extends TestCase
 
         $introEvent = ConversationEvent::where('conversation_id', $newConversationId)
             ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
-            ->where('payload->content', 'Thank you for your message. How can I help you today?')
+            ->where('payload->content', 'Thank you for the message. Do you have any more questions?')
             ->first();
 
         $this->assertNotNull($introEvent);

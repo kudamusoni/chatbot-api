@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Http\App;
 
+use App\Models\AuditLog;
 use App\Models\Client;
 use App\Models\ProductCatalog;
 use App\Models\User;
@@ -140,5 +141,42 @@ class ProductCatalogEndpointsTest extends TestCase
             ->withSession(['active_client_id' => $clientA->id])
             ->getJson("/app/products/{$productB->id}")
             ->assertNotFound();
+    }
+
+    public function test_admin_can_delete_product_and_audit_is_written(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $product = ProductCatalog::create([
+            'client_id' => $client->id,
+            'title' => 'Delete Me',
+            'description' => 'to delete',
+            'source' => 'sold',
+            'price' => 10000,
+            'currency' => 'GBP',
+        ]);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->deleteJson("/app/products/{$product->id}")
+            ->assertOk()
+            ->assertJson(['ok' => true]);
+
+        $this->assertDatabaseMissing('product_catalog', [
+            'id' => $product->id,
+            'client_id' => $client->id,
+        ]);
+
+        $audit = AuditLog::query()
+            ->where('action', 'product.deleted')
+            ->where('client_id', $client->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($audit);
+        $this->assertSame($product->id, $audit->meta['product_id'] ?? null);
+        $this->assertSame('Delete Me', $audit->meta['title'] ?? null);
     }
 }

@@ -25,7 +25,7 @@ class SseController extends Controller
     /**
      * Interval between keepalive pings (seconds).
      */
-    private const PING_INTERVAL = 15;
+    private const PING_INTERVAL = 10;
 
     /**
      * Reconnect delay for clients (milliseconds).

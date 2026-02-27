@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Models\Lead;
+use App\Models\ClientInvitation;
+use App\Policies\ClientInvitationPolicy;
 use App\Policies\LeadPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Gate;
@@ -11,6 +13,7 @@ class AuthServiceProvider extends ServiceProvider
 {
     protected $policies = [
         Lead::class => LeadPolicy::class,
+        ClientInvitation::class => ClientInvitationPolicy::class,
     ];
 
     public function boot(): void

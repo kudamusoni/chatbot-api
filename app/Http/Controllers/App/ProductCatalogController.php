@@ -5,6 +5,7 @@ namespace App\Http\Controllers\App;
 use App\Enums\ProductSource;
 use App\Http\Controllers\Controller;
 use App\Models\ProductCatalog;
+use App\Services\AuditLogger;
 use App\Support\CurrentClient;
 use App\Support\DashboardListDefaults;
 use App\Support\DashboardRange;
@@ -15,6 +16,8 @@ use Illuminate\Validation\ValidationException;
 
 class ProductCatalogController extends Controller
 {
+    public function __construct(private readonly AuditLogger $auditLogger) {}
+
     public function index(Request $request): JsonResponse
     {
         /** @var CurrentClient $currentClient */
@@ -85,5 +88,32 @@ class ProductCatalogController extends Controller
         return response()->json([
             'data' => ProductCatalogPresenter::present($product),
         ]);
+    }
+
+    public function destroy(Request $request, string $id): JsonResponse
+    {
+        /** @var CurrentClient $currentClient */
+        $currentClient = app(CurrentClient::class);
+        /** @var \App\Models\User $actor */
+        $actor = $request->user();
+
+        $product = ProductCatalog::query()
+            ->forClient((string) $currentClient->id())
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $meta = [
+            'product_id' => $product->id,
+            'title' => $product->title,
+            'source' => $product->source instanceof ProductSource ? $product->source->value : (string) $product->source,
+            'ip' => $request->ip(),
+            'ua' => (string) $request->userAgent(),
+        ];
+
+        $product->delete();
+
+        $this->auditLogger->log($actor, 'product.deleted', $currentClient->id(), $meta);
+
+        return response()->json(['ok' => true]);
     }
 }

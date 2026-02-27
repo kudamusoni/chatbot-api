@@ -103,6 +103,35 @@ class OrchestratorTest extends TestCase
         ], $confirmationEvent->payload['snapshot']);
     }
 
+    public function test_no_appraisal_questions_returns_to_chat_mode(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::CHAT,
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'How much is this worth?'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+                ->where('payload->content', 'I can help with an appraisal, but no questions are configured yet.')
+                ->exists()
+        );
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::CHAT, $conversation->state);
+        $this->assertNull($conversation->appraisal_current_key);
+    }
+
     public function test_starts_lead_when_requested_from_valuation_ready(): void
     {
         $client = $this->makeClient();
@@ -261,6 +290,31 @@ class OrchestratorTest extends TestCase
             ConversationEvent::where('conversation_id', $conversation->id)
                 ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
                 ->where('payload->content', 'Please use the Yes or No buttons to confirm your contact details.')
+                ->exists()
+        );
+    }
+
+    public function test_chat_fallback_uses_default_fallback_message_when_not_configured(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::CHAT,
+        ]);
+
+        $eventRecorder = new ConversationEventRecorder();
+        $orchestrator = new ConversationOrchestrator($eventRecorder);
+
+        $userEvent = $eventRecorder->recordUserMessage(
+            $conversation,
+            'Random text that does not trigger appraisal or lead.'
+        )['event'];
+
+        $orchestrator->handleUserMessage($conversation, $userEvent);
+
+        $this->assertTrue(
+            ConversationEvent::where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+                ->where('payload->content', 'Thank you for the message. Do you have any more questions?')
                 ->exists()
         );
     }

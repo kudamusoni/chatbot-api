@@ -7,9 +7,12 @@ use App\Http\Controllers\App\CatalogImportController;
 use App\Http\Controllers\App\ClientContextController;
 use App\Http\Controllers\App\ConversationController;
 use App\Http\Controllers\App\EmbedCodeController;
+use App\Http\Controllers\App\OnboardingController;
 use App\Http\Controllers\App\LeadController as AppLeadController;
 use App\Http\Controllers\App\ProductCatalogController;
 use App\Http\Controllers\App\SettingsController;
+use App\Http\Controllers\App\TeamInvitationController;
+use App\Http\Controllers\App\TeamMemberController;
 use App\Http\Controllers\App\ValuationController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,19 +27,28 @@ Route::get('/test', function () {
 Route::prefix('app')
     ->middleware(['force.json.app'])
     ->group(function () {
+        Route::prefix('onboarding')->group(function () {
+            Route::post('register', [OnboardingController::class, 'register'])->middleware('throttle:5,10');
+            Route::get('verify-email', [OnboardingController::class, 'verifyEmail'])->name('app.onboarding.verify-email');
+            Route::post('invitations/accept', [OnboardingController::class, 'acceptInvitation'])->middleware('throttle:10,10');
+            Route::get('invitations/preview', [OnboardingController::class, 'previewInvitation'])->middleware('throttle:20,10');
+            Route::post('resend-verification', [OnboardingController::class, 'resendVerification'])
+                ->middleware(['app.auth', 'throttle:3,60']);
+        });
+
         Route::prefix('auth')->group(function () {
-            Route::post('login', [AppAuthController::class, 'login']);
+            Route::post('login', [AppAuthController::class, 'login'])->middleware('throttle:10,10');
             Route::post('logout', [AppAuthController::class, 'logout'])->middleware('app.auth');
             Route::get('me', [AppAuthController::class, 'me'])->middleware('app.auth');
         });
 
-        Route::middleware('app.auth')->group(function () {
+        Route::middleware(['app.auth', 'app.verified'])->group(function () {
             Route::get('clients', [ClientContextController::class, 'index']);
             Route::post('clients/{client}/switch', [ClientContextController::class, 'switch']);
             Route::post('clients/clear', [ClientContextController::class, 'clear']);
         });
 
-        Route::middleware(['app.auth', 'set.current.client'])->group(function () {
+        Route::middleware(['app.auth', 'app.verified', 'set.current.client'])->group(function () {
             Route::get('appraisal-questions', [AppraisalQuestionsController::class, 'index']);
             Route::get('settings/appraisal-questions', [AppraisalQuestionsController::class, 'index']);
             Route::get('leads', [AppLeadController::class, 'index']);
@@ -74,6 +86,14 @@ Route::prefix('app')
                 Route::post('catalog-imports/{catalogImportId}/validate', [CatalogImportController::class, 'validateImport']);
                 Route::post('catalog-imports/{catalogImportId}/start', [CatalogImportController::class, 'start']);
                 Route::post('catalog-imports/{catalogImportId}/retry', [CatalogImportController::class, 'retry']);
+                Route::delete('products/{id}', [ProductCatalogController::class, 'destroy']);
+                Route::post('team/invitations', [TeamInvitationController::class, 'store'])->middleware('throttle:20,60');
+                Route::get('team/invitations', [TeamInvitationController::class, 'index']);
+                Route::post('team/invitations/{id}/revoke', [TeamInvitationController::class, 'revoke']);
+                Route::get('team/members', [TeamMemberController::class, 'index']);
             });
+
+            Route::patch('team/members/{userId}', [TeamMemberController::class, 'updateRole']);
+            Route::post('team/members/{userId}/remove', [TeamMemberController::class, 'remove']);
         });
     });

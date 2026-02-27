@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\App\StartCatalogImportRequest;
 use App\Jobs\RunCatalogImportJob;
 use App\Models\CatalogImport;
+use App\Services\AuditLogger;
 use App\Support\CurrentClient;
 use App\Support\DashboardRange;
 use App\Support\DashboardListDefaults;
@@ -24,6 +25,8 @@ use Illuminate\Support\Facades\Validator;
 
 class CatalogImportController extends Controller
 {
+    public function __construct(private readonly AuditLogger $auditLogger) {}
+
     private function denyMembership(): JsonResponse
     {
         return response()->json([
@@ -156,6 +159,8 @@ class CatalogImportController extends Controller
     {
         /** @var CurrentClient $currentClient */
         $currentClient = app(CurrentClient::class);
+        /** @var \App\Models\User $actor */
+        $actor = $request->user();
         $catalogImport = $this->findImportForCurrentClient($catalogImportId, $currentClient);
 
         if (!$catalogImport) {
@@ -192,6 +197,14 @@ class CatalogImportController extends Controller
             'queued_at' => null,
             'started_at' => null,
             'finished_at' => null,
+        ]);
+
+        $this->auditLogger->log($actor, 'catalog.import.uploaded', $currentClient->id(), [
+            'import_id' => $catalogImport->id,
+            'attempt' => (int) ($catalogImport->attempt ?? 1),
+            'file_name' => basename($path),
+            'ip' => $request->ip(),
+            'ua' => (string) $request->userAgent(),
         ]);
 
         $validation = $this->runValidation($catalogImport);

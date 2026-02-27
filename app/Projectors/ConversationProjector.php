@@ -6,12 +6,15 @@ use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
 use App\Events\Conversation\ConversationEventRecorded;
+use App\Mail\LeadRequestedMail;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\ConversationMessage;
 use App\Models\Lead;
+use App\Models\User;
 use App\Models\Valuation;
 use App\Services\LeadPiiNormalizer;
+use Illuminate\Support\Facades\Mail;
 
 /**
  * Projects conversation events into read-optimized tables.
@@ -335,7 +338,7 @@ class ConversationProjector
         $phoneRaw = (string) ($event->payload['phone_raw'] ?? '');
         $phoneNormalized = $this->leadPiiNormalizer->normalizePhone($phoneRaw);
 
-        Lead::firstOrCreate(
+        $lead = Lead::firstOrCreate(
             ['request_event_id' => $event->id],
             [
                 'conversation_id' => $event->conversation_id,
@@ -350,12 +353,36 @@ class ConversationProjector
             ]
         );
 
+        if ($lead->wasRecentlyCreated) {
+            $this->notifyClientUsersOfLead($lead);
+        }
+
         $conversation->update([
             'state' => ConversationState::CHAT,
             'lead_current_key' => null,
             'lead_answers' => null,
             'lead_identity_candidate' => null,
         ]);
+    }
+
+    private function notifyClientUsersOfLead(Lead $lead): void
+    {
+        $clientName = (string) ($lead->client?->name ?? 'your company');
+        $dashboardBase = rtrim((string) config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173')), '/');
+        $dashboardUrl = "{$dashboardBase}/leads/{$lead->id}";
+
+        $recipients = User::query()
+            ->join('client_user', 'client_user.user_id', '=', 'users.id')
+            ->where('client_user.client_id', $lead->client_id)
+            ->whereNotNull('users.email')
+            ->distinct()
+            ->pluck('users.email')
+            ->filter(fn ($email) => is_string($email) && trim($email) !== '')
+            ->values();
+
+        foreach ($recipients as $email) {
+            Mail::to((string) $email)->queue(new LeadRequestedMail($clientName, $lead, $dashboardUrl));
+        }
     }
 
     /**

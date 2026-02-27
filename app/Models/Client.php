@@ -80,4 +80,9 @@ class Client extends Model
     {
         return $this->hasOne(ClientSetting::class);
     }
+
+    public function invitations(): HasMany
+    {
+        return $this->hasMany(ClientInvitation::class);
+    }
 }

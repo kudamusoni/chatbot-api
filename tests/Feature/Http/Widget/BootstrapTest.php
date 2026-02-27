@@ -3,6 +3,7 @@
 namespace Tests\Feature\Http\Widget;
 
 use App\Enums\WidgetDenyReason;
+use App\Models\ClientSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithConversations;
 use Tests\TestCase;
@@ -26,6 +27,15 @@ class BootstrapTest extends TestCase
                 'last_event_id',
                 'last_activity_at',
                 'widget_security_version',
+                'widget' => [
+                    'client_name',
+                    'bot_name',
+                    'brand_color',
+                    'accent_color',
+                    'logo_url',
+                    'prompt_settings',
+                    'preset_questions',
+                ],
             ]);
 
         // Token should be 64 characters
@@ -36,6 +46,9 @@ class BootstrapTest extends TestCase
             'id' => $response->json('conversation_id'),
             'client_id' => $client->id,
         ]);
+
+        $this->assertDatabaseCount('conversation_messages', 0);
+        $response->assertJsonPath('widget.preset_questions', []);
     }
 
     public function test_resumes_conversation_when_valid_token_provided(): void
@@ -191,5 +204,55 @@ class BootstrapTest extends TestCase
             'id' => $conversationId,
             'session_token_hash' => $expectedHash,
         ]);
+    }
+
+    public function test_bootstrap_returns_default_widget_settings_when_missing(): void
+    {
+        $client = $this->makeClient(['name' => 'Acme Auctions']);
+
+        $response = $this->postJson('/api/widget/bootstrap', [
+            'client_id' => $client->id,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('widget.client_name', 'Acme Auctions')
+            ->assertJsonPath('widget.bot_name', null)
+            ->assertJsonPath('widget.brand_color', null)
+            ->assertJsonPath('widget.accent_color', null)
+            ->assertJsonPath('widget.logo_url', null)
+            ->assertJsonPath('widget.prompt_settings', [])
+            ->assertJsonPath('widget.preset_questions', []);
+    }
+
+    public function test_bootstrap_returns_custom_widget_settings(): void
+    {
+        $client = $this->makeClient(['name' => 'Acme Auctions']);
+        ClientSetting::forClientOrCreate((string) $client->id)->update([
+            'bot_name' => 'Acme Assistant',
+            'brand_color' => '#0EA5E9',
+            'accent_color' => '#22C55E',
+            'logo_url' => 'https://cdn.example.com/logo.png',
+            'prompt_settings' => [
+                'preset_questions' => [
+                    'How much is this worth?',
+                    'Can I request a manual review?',
+                ],
+            ],
+            'widget_security_version' => 7,
+        ]);
+
+        $response = $this->postJson('/api/widget/bootstrap', [
+            'client_id' => $client->id,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('widget.client_name', 'Acme Auctions')
+            ->assertJsonPath('widget.bot_name', 'Acme Assistant')
+            ->assertJsonPath('widget.brand_color', '#0EA5E9')
+            ->assertJsonPath('widget.accent_color', '#22C55E')
+            ->assertJsonPath('widget.logo_url', 'https://cdn.example.com/logo.png')
+            ->assertJsonPath('widget_security_version', 7)
+            ->assertJsonPath('widget.preset_questions.0', 'How much is this worth?')
+            ->assertJsonPath('widget.preset_questions.1', 'Can I request a manual review?');
     }
 }

@@ -5,12 +5,15 @@ namespace Tests\Feature\Domain;
 use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
+use App\Mail\LeadRequestedMail;
 use App\Models\Conversation;
 use App\Models\ConversationMessage;
 use App\Models\Lead;
+use App\Models\User;
 use App\Models\Valuation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Mail;
 use Tests\Concerns\InteractsWithConversations;
 use Tests\TestCase;
 
@@ -314,7 +317,20 @@ class ProjectionTest extends TestCase
 
     public function test_lead_requested_creates_lead_and_returns_chat_state(): void
     {
+        Mail::fake();
+
         $client = $this->makeClient();
+        $owner = User::factory()->create(['email' => 'owner@example.com']);
+        $admin = User::factory()->create(['email' => 'admin@example.com']);
+        $viewer = User::factory()->create(['email' => 'viewer@example.com']);
+        $outside = User::factory()->create(['email' => 'outside@example.com']);
+        $owner->clients()->attach($client->id, ['role' => 'owner']);
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+        $viewer->clients()->attach($client->id, ['role' => 'viewer']);
+        // Outside user should not be emailed.
+        $outsideClient = $this->makeClient(['name' => 'Other Client']);
+        $outside->clients()->attach($outsideClient->id, ['role' => 'owner']);
+
         [$conversation, ] = $this->makeConversation($client, [
             'state' => ConversationState::LEAD_INTAKE,
             'lead_current_key' => 'phone',
@@ -352,6 +368,40 @@ class ProjectionTest extends TestCase
         $this->assertNull($conversation->lead_current_key);
         $this->assertNull($conversation->lead_answers);
         $this->assertNull($conversation->lead_identity_candidate);
+
+        Mail::assertQueued(LeadRequestedMail::class, 3);
+        Mail::assertQueued(LeadRequestedMail::class, fn (LeadRequestedMail $mail) => $mail->hasTo('owner@example.com'));
+        Mail::assertQueued(LeadRequestedMail::class, fn (LeadRequestedMail $mail) => $mail->hasTo('admin@example.com'));
+        Mail::assertQueued(LeadRequestedMail::class, fn (LeadRequestedMail $mail) => $mail->hasTo('viewer@example.com'));
+        Mail::assertNotQueued(LeadRequestedMail::class, fn (LeadRequestedMail $mail) => $mail->hasTo('outside@example.com'));
+    }
+
+    public function test_replaying_same_lead_requested_event_does_not_send_duplicate_emails(): void
+    {
+        Mail::fake();
+
+        $client = $this->makeClient();
+        $owner = User::factory()->create(['email' => 'owner@example.com']);
+        $owner->clients()->attach($client->id, ['role' => 'owner']);
+        [$conversation, ] = $this->makeConversation($client, [
+            'state' => ConversationState::LEAD_INTAKE,
+        ]);
+
+        $result = $this->recordEvent(
+            $conversation,
+            ConversationEventType::LEAD_REQUESTED,
+            [
+                'name' => 'Jane Doe',
+                'email' => 'jane@example.com',
+                'phone_raw' => '(202) 555-0110',
+            ]
+        );
+
+        // Simulate replay by handling the same event again.
+        app(\App\Projectors\ConversationProjector::class)
+            ->handle(new \App\Events\Conversation\ConversationEventRecorded($result['event']));
+
+        Mail::assertQueued(LeadRequestedMail::class, 1);
     }
 
     public function test_lead_identity_confirmation_requested_transitions_state_and_sets_candidate(): void

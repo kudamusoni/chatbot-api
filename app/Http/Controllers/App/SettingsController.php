@@ -55,7 +55,7 @@ class SettingsController extends Controller
             }
         }
 
-        if (array_key_exists('intro_message', $validated)) {
+        if (array_key_exists('fallback_message', $validated)) {
             $basePromptSettings = [];
             if (array_key_exists('prompt_settings', $settingsData) && is_array($settingsData['prompt_settings'])) {
                 $basePromptSettings = $settingsData['prompt_settings'];
@@ -63,7 +63,28 @@ class SettingsController extends Controller
                 $basePromptSettings = $settings->prompt_settings;
             }
 
-            $basePromptSettings['intro_message'] = $validated['intro_message'];
+            $basePromptSettings['fallback_message'] = $validated['fallback_message'];
+            $settingsData['prompt_settings'] = $basePromptSettings;
+        }
+
+        if (array_key_exists('preset_questions', $validated)) {
+            $basePromptSettings = [];
+            if (array_key_exists('prompt_settings', $settingsData) && is_array($settingsData['prompt_settings'])) {
+                $basePromptSettings = $settingsData['prompt_settings'];
+            } elseif (is_array($settings->prompt_settings)) {
+                $basePromptSettings = $settings->prompt_settings;
+            }
+
+            $presetQuestions = is_array($validated['preset_questions']) ? $validated['preset_questions'] : [];
+            $normalized = [];
+            foreach ($presetQuestions as $item) {
+                $text = trim((string) $item);
+                if ($text !== '') {
+                    $normalized[] = $text;
+                }
+            }
+
+            $basePromptSettings['preset_questions'] = array_values(array_unique($normalized));
             $settingsData['prompt_settings'] = $basePromptSettings;
         }
 
@@ -72,7 +93,7 @@ class SettingsController extends Controller
         foreach ($filtered as $key => $value) {
             // v1 strategy: replace entire prompt_settings object when provided.
             if ($key === 'prompt_settings') {
-                $settings->prompt_settings = $value ?? [];
+                $settings->prompt_settings = $this->sanitizePromptSettings(is_array($value) ? $value : []);
                 continue;
             }
 
@@ -248,9 +269,40 @@ class SettingsController extends Controller
             'brand_color' => $settings->brand_color,
             'accent_color' => $settings->accent_color,
             'logo_url' => $settings->logo_url,
-            'prompt_settings' => is_array($settings->prompt_settings) ? $settings->prompt_settings : [],
+            'prompt_settings' => $this->sanitizePromptSettings(is_array($settings->prompt_settings) ? $settings->prompt_settings : []),
             'allowed_origins' => is_array($settings->allowed_origins) ? $settings->allowed_origins : [],
             'widget_security_version' => (int) ($settings->widget_security_version ?? 1),
         ];
+    }
+
+    /**
+     * Keep prompt settings forward-compatible while removing deprecated intro_message.
+     *
+     * @param array<string, mixed> $promptSettings
+     * @return array<string, mixed>
+     */
+    private function sanitizePromptSettings(array $promptSettings): array
+    {
+        unset($promptSettings['intro_message']);
+
+        if (array_key_exists('fallback_message', $promptSettings)) {
+            $promptSettings['fallback_message'] = $promptSettings['fallback_message'] === null
+                ? null
+                : trim((string) $promptSettings['fallback_message']);
+        }
+
+        if (array_key_exists('preset_questions', $promptSettings)) {
+            $normalized = [];
+            $raw = is_array($promptSettings['preset_questions']) ? $promptSettings['preset_questions'] : [];
+            foreach ($raw as $item) {
+                $text = trim((string) $item);
+                if ($text !== '') {
+                    $normalized[] = $text;
+                }
+            }
+            $promptSettings['preset_questions'] = array_values(array_unique($normalized));
+        }
+
+        return $promptSettings;
     }
 }

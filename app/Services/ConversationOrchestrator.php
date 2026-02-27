@@ -13,6 +13,7 @@ use App\Services\LeadPiiNormalizer;
 class ConversationOrchestrator
 {
     private LeadPiiNormalizer $leadPiiNormalizer;
+    private WidgetIntroMessageResolver $introMessageResolver;
 
     private const LEAD_IDENTITY_PROMPT = 'I found your previous contact details. Is this you?';
 
@@ -30,9 +31,11 @@ class ConversationOrchestrator
 
     public function __construct(
         private readonly ConversationEventRecorder $eventRecorder,
-        ?LeadPiiNormalizer $leadPiiNormalizer = null
+        ?LeadPiiNormalizer $leadPiiNormalizer = null,
+        ?WidgetIntroMessageResolver $introMessageResolver = null
     ) {
         $this->leadPiiNormalizer = $leadPiiNormalizer ?? new LeadPiiNormalizer();
+        $this->introMessageResolver = $introMessageResolver ?? new WidgetIntroMessageResolver();
     }
 
     /**
@@ -138,7 +141,7 @@ class ConversationOrchestrator
 
         $this->recordAssistantMessage(
             $conversation,
-            'Hello. How can I help you today?',
+            $this->introMessageResolver->forFallback((string) $conversation->client_id),
             $userMessageEvent
         );
     }
@@ -149,7 +152,7 @@ class ConversationOrchestrator
             return false;
         }
 
-        return (bool) preg_match('/\b(worth|value|appraise|appraisal|valuation|how much)\b/i', $text);
+        return (bool) preg_match('/\b(worth|value|appraise|appraisal|valuation|how much|sell)\b/i', $text);
     }
 
     private function shouldStartLead(string $text): bool
@@ -385,6 +388,25 @@ class ConversationOrchestrator
 
     private function startAppraisal(Conversation $conversation, ConversationEvent $userMessageEvent): void
     {
+        $question = $this->firstRequiredQuestion($conversation);
+
+        if (!$question) {
+            $this->recordAssistantMessage(
+                $conversation,
+                'I can help with an appraisal, but no questions are configured yet.',
+                $userMessageEvent
+            );
+
+            $conversation->update([
+                'state' => ConversationState::CHAT,
+                'appraisal_current_key' => null,
+                'appraisal_answers' => null,
+                'appraisal_snapshot' => null,
+            ]);
+
+            return;
+        }
+
         $correlationId = $userMessageEvent->correlation_id;
 
         $this->eventRecorder->record(
@@ -397,18 +419,6 @@ class ConversationOrchestrator
             idempotencyKey: $this->orchestratorKey($userMessageEvent, 'appraisal.started'),
             correlationId: $correlationId
         );
-
-        $question = $this->firstRequiredQuestion($conversation);
-
-        if (!$question) {
-            $this->recordAssistantMessage(
-                $conversation,
-                'I can help with an appraisal, but no questions are configured yet.',
-                $userMessageEvent
-            );
-
-            return;
-        }
 
         $this->askQuestion($conversation, $question, $userMessageEvent);
     }

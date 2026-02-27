@@ -3,6 +3,7 @@
 namespace Tests\Feature\Http\App;
 
 use App\Jobs\RunCatalogImportJob;
+use App\Models\AuditLog;
 use App\Models\CatalogImport;
 use App\Models\Client;
 use App\Models\User;
@@ -50,6 +51,15 @@ class CatalogImportLifecycleTest extends TestCase
         $upload->assertJsonPath('columns.1', 'price');
         $upload->assertJsonPath('sample_rows.0.0', 'Rolex');
         $upload->assertJsonPath('sample_rows.0.1', '1000');
+
+        $audit = AuditLog::query()
+            ->where('action', 'catalog.import.uploaded')
+            ->where('client_id', $client->id)
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($audit);
+        $this->assertSame($importId, $audit->meta['import_id'] ?? null);
+        $this->assertSame(1, $audit->meta['attempt'] ?? null);
 
         $this->actingAs($user, 'web')
             ->withSession(['active_client_id' => $client->id])

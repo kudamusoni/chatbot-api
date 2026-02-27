@@ -137,7 +137,7 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $this->assertDatabaseHas('client_settings', ['client_id' => $client->id]);
     }
 
-    public function test_admin_can_put_settings_using_flat_intro_message_field(): void
+    public function test_admin_can_put_settings_using_flat_fallback_message_field(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
         $admin = User::factory()->create();
@@ -154,15 +154,15 @@ class SettingsAndEmbedEndpointsTest extends TestCase
             ->withSession(['active_client_id' => $client->id])
             ->putJson('/app/settings', [
                 'bot_name' => 'Kuda Test',
-                'intro_message' => null,
+                'fallback_message' => null,
             ])
             ->assertOk()
             ->assertJsonPath('settings.bot_name', 'Kuda Test')
-            ->assertJsonPath('settings.prompt_settings.intro_message', null);
+            ->assertJsonPath('settings.prompt_settings.fallback_message', null);
 
         $settings = ClientSetting::query()->where('client_id', $client->id)->firstOrFail();
         $this->assertSame('Kuda Test', $settings->bot_name);
-        $this->assertSame(['tone' => 'formal', 'intro_message' => null], $settings->prompt_settings);
+        $this->assertSame(['tone' => 'formal', 'fallback_message' => null], $settings->prompt_settings);
     }
 
     public function test_admin_can_put_settings_using_flat_canonical_payload_shape(): void
@@ -185,20 +185,83 @@ class SettingsAndEmbedEndpointsTest extends TestCase
                 'brand_color' => null,
                 'accent_color' => null,
                 'logo_url' => null,
-                'intro_message' => null,
+                'fallback_message' => null,
             ])
             ->assertOk()
             ->assertJsonPath('settings.bot_name', 'Kuda Test')
-            ->assertJsonPath('settings.prompt_settings.intro_message', null)
+            ->assertJsonPath('settings.prompt_settings.fallback_message', null)
             ->assertJsonPath('settings.allowed_origins', [])
             ->assertJsonPath('settings.widget_security_version', 1);
 
         $settings = ClientSetting::query()->where('client_id', $client->id)->firstOrFail();
         $this->assertSame('Kuda Test', $settings->bot_name);
-        $this->assertSame(['intro_message' => null], $settings->prompt_settings);
+        $this->assertSame(['fallback_message' => null], $settings->prompt_settings);
         $this->assertNull($settings->brand_color);
         $this->assertNull($settings->accent_color);
         $this->assertNull($settings->logo_url);
+    }
+
+    public function test_admin_can_put_settings_with_flat_preset_questions(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings', [
+                'preset_questions' => [
+                    'How much is this worth?',
+                    'Can I request a manual review?',
+                    'How much is this worth?',
+                    '',
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.prompt_settings.preset_questions.0', 'How much is this worth?')
+            ->assertJsonPath('settings.prompt_settings.preset_questions.1', 'Can I request a manual review?');
+
+        $settings = ClientSetting::query()->where('client_id', $client->id)->firstOrFail();
+        $this->assertSame([
+            'preset_questions' => [
+                'How much is this worth?',
+                'Can I request a manual review?',
+            ],
+        ], $settings->prompt_settings);
+    }
+
+    public function test_intro_message_in_prompt_settings_is_ignored_on_save(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings', [
+                'prompt_settings' => [
+                    'intro_message' => 'Yoo. Cuzzy',
+                    'fallback_message' => 'Thank you for the message. Do you have any more questions?',
+                    'preset_questions' => [
+                        'I want to sell an item',
+                        'Where are you located?',
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonMissingPath('settings.prompt_settings.intro_message')
+            ->assertJsonPath('settings.prompt_settings.fallback_message', 'Thank you for the message. Do you have any more questions?')
+            ->assertJsonPath('settings.prompt_settings.preset_questions.0', 'I want to sell an item')
+            ->assertJsonPath('settings.prompt_settings.preset_questions.1', 'Where are you located?');
+
+        $settings = ClientSetting::query()->where('client_id', $client->id)->firstOrFail();
+        $this->assertSame([
+            'fallback_message' => 'Thank you for the message. Do you have any more questions?',
+            'preset_questions' => [
+                'I want to sell an item',
+                'Where are you located?',
+            ],
+        ], $settings->prompt_settings);
     }
 
     public function test_admin_put_settings_creates_client_settings_row_when_missing(): void
