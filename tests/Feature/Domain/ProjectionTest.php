@@ -6,6 +6,7 @@ use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
 use App\Mail\LeadRequestedMail;
+use App\Mail\ValuationCompletedMail;
 use App\Models\Conversation;
 use App\Models\ConversationMessage;
 use App\Models\Lead;
@@ -480,25 +481,45 @@ class ProjectionTest extends TestCase
         $this->assertEquals($client->id, $valuation->client_id);
         $this->assertEquals($result['event']->id, $valuation->request_event_id);
         $this->assertEquals(ValuationStatus::PENDING, $valuation->status);
-        $this->assertEquals($inputData, $valuation->input_snapshot);
+        $this->assertEquals([
+            'raw' => $inputData,
+            'normalized' => [],
+            'normalization_meta' => [],
+        ], $valuation->input_snapshot);
     }
 
     public function test_valuation_completed_updates_valuation_status_and_result(): void
     {
         // Fake the bus to prevent RunValuationJob from executing synchronously
         Bus::fake();
+        Mail::fake();
 
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client);
 
         $inputData = ['item' => 'antique vase'];
         $snapshotHash = Valuation::generateSnapshotHash($inputData);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'email_hash' => hash('sha256', 'jane@example.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
 
         // Request valuation
         $this->recordEvent(
             $conversation,
             ConversationEventType::VALUATION_REQUESTED,
-            $inputData
+            [
+                'input_snapshot' => $inputData,
+                'lead_id' => $lead->id,
+                'snapshot_hash' => $snapshotHash,
+            ]
         );
 
         $valuationResult = [
@@ -521,6 +542,9 @@ class ProjectionTest extends TestCase
 
         $this->assertEquals(ValuationStatus::COMPLETED, $valuation->status);
         $this->assertEquals($valuationResult, $valuation->result);
+        Mail::assertQueued(ValuationCompletedMail::class, function (ValuationCompletedMail $mail): bool {
+            return $mail->hasTo('jane@example.com');
+        });
     }
 
     public function test_duplicate_valuation_request_is_idempotent_via_snapshot_hash(): void

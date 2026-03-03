@@ -394,30 +394,11 @@ class CatalogImportController extends Controller
                 'reason_code' => AppDenyReason::IMPORT_RUNNING->value,
             ], 409);
         }
-
-        DB::transaction(function () use ($catalogImport): void {
-            DB::table('catalog_import_errors')
-                ->where('import_id', $catalogImport->id)
-                ->delete();
-
-            $catalogImport->update([
-                'attempt' => ((int) ($catalogImport->attempt ?? 1)) + 1,
-                'status' => CatalogImportStatus::CREATED,
-                'totals' => null,
-                'errors_count' => 0,
-                'errors_sample' => null,
-                'queued_at' => null,
-                'started_at' => null,
-                'finished_at' => null,
-            ]);
-        });
-
+        // Failed imports are terminal in v1. Users must create a new import.
         return response()->json([
-            'ok' => true,
-            'id' => $catalogImport->id,
-            'attempt' => $catalogImport->fresh()->attempt,
-            'status' => $catalogImport->fresh()->status,
-        ]);
+            'error' => 'CONFLICT',
+            'reason_code' => AppDenyReason::INVALID_IMPORT_STATE->value,
+        ], 409);
     }
 
     public function errors(string $catalogImportId): Response
@@ -519,7 +500,7 @@ class CatalogImportController extends Controller
             CatalogImportStatus::VALIDATED->value,
         ], true);
         $canStart = $status === CatalogImportStatus::VALIDATED->value;
-        $canRetry = $status === CatalogImportStatus::FAILED->value;
+        $canRetry = false;
         $canDownloadErrors = $errorsCount > 0;
 
         return [
@@ -621,8 +602,8 @@ class CatalogImportController extends Controller
      */
     private function normalizedTotals(array $totals): array
     {
-        $rowsTotal = (int) ($totals['processed'] ?? $totals['rows_total'] ?? 0);
-        $rowsInvalid = (int) ($totals['invalid'] ?? $totals['rows_invalid'] ?? 0);
+        $rowsTotal = (int) ($totals['processed_rows'] ?? $totals['processed'] ?? $totals['rows_total'] ?? 0);
+        $rowsInvalid = (int) ($totals['invalid_rows'] ?? $totals['invalid'] ?? $totals['rows_invalid'] ?? 0);
         $rowsInserted = (int) ($totals['inserted'] ?? 0);
         $rowsUpdated = (int) ($totals['updated'] ?? 0);
         $rowsImported = (int) ($totals['rows_imported'] ?? ($rowsInserted + $rowsUpdated));
@@ -645,7 +626,7 @@ class CatalogImportController extends Controller
             CatalogImportStatus::UPLOADED->value => 'UPLOAD',
             CatalogImportStatus::VALIDATED->value => 'MAP_AND_START',
             CatalogImportStatus::QUEUED->value, CatalogImportStatus::RUNNING->value => 'WAITING',
-            CatalogImportStatus::FAILED->value => 'RETRY',
+            CatalogImportStatus::FAILED->value => 'DONE',
             CatalogImportStatus::COMPLETED->value => 'DONE',
             default => 'WAITING',
         };

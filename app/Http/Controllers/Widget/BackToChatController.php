@@ -70,6 +70,7 @@ class BackToChatController extends Controller
                     'lead_answers' => null,
                     'lead_current_key' => null,
                     'lead_identity_candidate' => null,
+                    'valuation_contact_lead_id' => null,
                 ]);
 
                 $this->eventRecorder->record(

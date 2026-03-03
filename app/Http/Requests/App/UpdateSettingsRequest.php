@@ -22,6 +22,8 @@ class UpdateSettingsRequest extends FormRequest
             'accent_color' => ['nullable', 'regex:/^#([0-9a-fA-F]{6})$/'],
             'logo_url' => ['nullable', 'url', 'max:500'],
             'prompt_settings' => ['nullable', 'array'],
+            'ai_enabled' => ['nullable', 'boolean'],
+            'ai_normalization_enabled' => ['nullable', 'boolean'],
 
             // Flat additive prompt aliases.
             'fallback_message' => ['nullable', 'string', 'max:2000'],

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Models\AppraisalQuestion;
+use App\Models\ClientSetting;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\Lead;
@@ -63,12 +64,34 @@ class ConversationOrchestrator
     {
         $text = trim((string) ($userMessageEvent->payload['content'] ?? ''));
 
+        if ($conversation->state === ConversationState::VALUATION_RUNNING) {
+            $this->recordAssistantMessage(
+                $conversation,
+                'Your valuation is running. I can answer after it finishes.',
+                $userMessageEvent,
+                suffix: 'valuation.running'
+            );
+
+            return;
+        }
+
         if ($conversation->state === ConversationState::LEAD_IDENTITY_CONFIRM) {
             $this->recordAssistantMessage(
                 $conversation,
                 'Please use the Yes or No buttons to confirm your contact details.',
                 $userMessageEvent,
                 suffix: 'lead.identity.awaiting_decision'
+            );
+
+            return;
+        }
+
+        if ($conversation->state === ConversationState::VALUATION_CONTACT_CAPTURE) {
+            $this->recordAssistantMessage(
+                $conversation,
+                'Please share your email in the contact step so I can run your valuation.',
+                $userMessageEvent,
+                suffix: 'valuation.contact.capture'
             );
 
             return;
@@ -82,15 +105,15 @@ class ConversationOrchestrator
 
         if ($this->shouldStartLead($text)) {
             if ($conversation->state === ConversationState::VALUATION_READY) {
-                $latestLead = $this->findLatestLeadForConversation($conversation);
-
-                if ($latestLead) {
-                    $this->requestLeadIdentityConfirmation($conversation, $userMessageEvent, $latestLead);
+                $linkedLead = $this->findLinkedValuationContactLead($conversation);
+                if ($linkedLead) {
+                    $this->submitExpertReviewRequest($conversation, $userMessageEvent, $linkedLead);
 
                     return;
                 }
 
-                $this->startLead($conversation, $userMessageEvent);
+                $prefill = $this->findLatestLeadForConversation($conversation);
+                $this->requestValuationContactForExpertReview($conversation, $userMessageEvent, $prefill);
 
                 return;
             }
@@ -128,6 +151,18 @@ class ConversationOrchestrator
         }
 
         if ($conversation->state === ConversationState::APPRAISAL_INTAKE) {
+            if ($this->isUnrelatedQuestionWhileInAppraisal($text)) {
+                $this->recordAssistantMessage(
+                    $conversation,
+                    'I can answer after we finish these valuation questions.',
+                    $userMessageEvent,
+                    suffix: 'appraisal.strict.defer'
+                );
+                $this->repeatCurrentAppraisalQuestion($conversation, $userMessageEvent);
+
+                return;
+            }
+
             $this->handleAppraisalAnswer($conversation, $userMessageEvent, $text);
 
             return;
@@ -139,10 +174,36 @@ class ConversationOrchestrator
             return;
         }
 
-        $this->recordAssistantMessage(
+        if (!$this->isAiChatEnabled((string) $conversation->client_id)) {
+            $this->recordAssistantMessage(
+                $conversation,
+                $this->introMessageResolver->forFallback((string) $conversation->client_id),
+                $userMessageEvent
+            );
+
+            return;
+        }
+
+        $turnId = $this->turnIdForEvent($userMessageEvent);
+        if ($turnId === null) {
+            $this->recordAssistantMessage(
+                $conversation,
+                $this->introMessageResolver->forFallback((string) $conversation->client_id),
+                $userMessageEvent
+            );
+
+            return;
+        }
+
+        $this->eventRecorder->record(
             $conversation,
-            $this->introMessageResolver->forFallback((string) $conversation->client_id),
-            $userMessageEvent
+            ConversationEventType::ASSISTANT_RESPONSE_REQUESTED,
+            [
+                'turn_id' => $turnId,
+                'request_event_id' => $userMessageEvent->id,
+            ],
+            idempotencyKey: $this->orchestratorKey($userMessageEvent, 'assistant.response.requested'),
+            correlationId: $userMessageEvent->correlation_id
         );
     }
 
@@ -330,6 +391,80 @@ class ConversationOrchestrator
         return Lead::where('conversation_id', $conversation->id)
             ->latest('created_at')
             ->first();
+    }
+
+    private function findLinkedValuationContactLead(Conversation $conversation): ?Lead
+    {
+        $leadId = is_string($conversation->valuation_contact_lead_id)
+            ? trim($conversation->valuation_contact_lead_id)
+            : '';
+
+        if ($leadId === '') {
+            return null;
+        }
+
+        return Lead::query()
+            ->where('id', $leadId)
+            ->where('conversation_id', $conversation->id)
+            ->where('client_id', $conversation->client_id)
+            ->first();
+    }
+
+    private function requestValuationContactForExpertReview(
+        Conversation $conversation,
+        ConversationEvent $userMessageEvent,
+        ?Lead $prefillLead
+    ): void {
+        $prefill = null;
+        $leadId = null;
+
+        if ($prefillLead) {
+            $leadId = (string) $prefillLead->id;
+            $prefill = [
+                'name' => $prefillLead->name !== '' ? $prefillLead->name : null,
+                'email' => $prefillLead->email !== '' ? $prefillLead->email : null,
+                'phone' => $prefillLead->phone_normalized !== '' ? $prefillLead->phone_normalized : null,
+            ];
+        }
+
+        $this->eventRecorder->record(
+            $conversation,
+            ConversationEventType::VALUATION_CONTACT_REQUESTED,
+            [
+                'reason' => 'VALUATION_REQUIRES_EMAIL',
+                'pending_intent' => 'expert_review',
+                'lead_id' => $leadId,
+                'valuation_contact_prefill' => $prefill,
+                'fields_required' => ['email'],
+                'source_message_event_id' => $userMessageEvent->id,
+            ],
+            idempotencyKey: $this->orchestratorKey($userMessageEvent, 'valuation.contact.requested.expert_review'),
+            correlationId: $userMessageEvent->correlation_id
+        );
+    }
+
+    private function submitExpertReviewRequest(
+        Conversation $conversation,
+        ConversationEvent $userMessageEvent,
+        Lead $lead
+    ): void {
+        $this->eventRecorder->record(
+            $conversation,
+            ConversationEventType::LEAD_REQUESTED,
+            [
+                'lead_id' => (string) $lead->id,
+                'name' => $lead->name ?? '',
+                'email' => $lead->email ?? '',
+                'phone_raw' => $lead->phone_raw ?? '',
+                'phone_normalized' => $lead->phone_normalized ?? '',
+                'source' => 'EXPERT_REVIEW_BUTTON',
+                'source_message_event_id' => $userMessageEvent->id,
+            ],
+            idempotencyKey: $this->orchestratorKey($userMessageEvent, 'lead.requested.expert_review'),
+            correlationId: $userMessageEvent->correlation_id
+        );
+
+        $this->emitLeadSubmittedAssistantMessages($conversation, $userMessageEvent);
     }
 
     private function requestLeadIdentityConfirmation(
@@ -523,10 +658,93 @@ class ConversationOrchestrator
         $this->eventRecorder->record(
             $conversation,
             ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-            ['content' => $content],
+            [
+                'content' => $content,
+                'turn_id' => $this->turnIdForEvent($userMessageEvent),
+            ],
             idempotencyKey: $this->orchestratorKey($userMessageEvent, "assistant{$suffixKey}"),
             correlationId: $userMessageEvent->correlation_id
         );
+    }
+
+    private function isAiChatEnabled(string $clientId): bool
+    {
+        if (!config('ai.enabled')) {
+            return false;
+        }
+
+        $settings = ClientSetting::forClientOrCreate($clientId);
+
+        return (bool) $settings->ai_enabled;
+    }
+
+    private function turnIdForEvent(ConversationEvent $event): ?string
+    {
+        $turnId = $event->payload['turn_id'] ?? null;
+        if (!is_string($turnId) || trim($turnId) === '') {
+            return null;
+        }
+
+        return trim($turnId);
+    }
+
+    private function isUnrelatedQuestionWhileInAppraisal(string $text): bool
+    {
+        $trimmed = trim($text);
+        if ($trimmed === '') {
+            return false;
+        }
+
+        if ($this->isSkipResponse($trimmed)) {
+            return false;
+        }
+
+        return str_contains($trimmed, '?');
+    }
+
+    private function repeatCurrentAppraisalQuestion(Conversation $conversation, ConversationEvent $userMessageEvent): void
+    {
+        $currentKey = $conversation->appraisal_current_key;
+        if (!is_string($currentKey) || $currentKey === '') {
+            return;
+        }
+
+        $question = AppraisalQuestion::query()
+            ->where('client_id', $conversation->client_id)
+            ->where('key', $currentKey)
+            ->first();
+
+        if (!$question) {
+            return;
+        }
+
+        $prompt = $question->label;
+        if ($question->help_text) {
+            $prompt .= " {$question->help_text}";
+        }
+
+        $this->recordAssistantMessage(
+            $conversation,
+            $prompt,
+            $userMessageEvent,
+            suffix: "appraisal.repeat.{$currentKey}"
+        );
+    }
+
+    private function isSkipResponse(string $text): bool
+    {
+        $value = strtolower(trim($text));
+        $tokens = config('appraisal.skip_tokens', ['unknown', 'not sure', 'skip']);
+        if (!is_array($tokens)) {
+            $tokens = ['unknown', 'not sure', 'skip'];
+        }
+
+        $normalized = array_map(
+            static fn ($token) => strtolower(trim((string) $token)),
+            $tokens
+        );
+
+        return in_array($value, $normalized, true);
     }
 
     private function firstRequiredQuestion(Conversation $conversation): ?AppraisalQuestion

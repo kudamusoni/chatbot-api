@@ -78,6 +78,11 @@ class ValuationPresenter
         $currency = $snapshot['currency'] ?? null;
 
         if (!is_string($currency) || trim($currency) === '') {
+            $raw = is_array($snapshot['raw'] ?? null) ? $snapshot['raw'] : [];
+            $currency = $raw['currency'] ?? null;
+        }
+
+        if (!is_string($currency) || trim($currency) === '') {
             return 'GBP';
         }
 

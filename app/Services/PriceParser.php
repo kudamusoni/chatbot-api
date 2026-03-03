@@ -9,6 +9,7 @@ class PriceParser
      *
      * Rules (v1):
      * - strip currency symbols and spaces
+     * - allow comma thousands separators
      * - reject comma decimals
      * - reject negatives and blanks
      * - reject values with > 2 decimal places
@@ -24,8 +25,25 @@ class PriceParser
         $value = preg_replace('/[^0-9.,\-]/', '', $value) ?? '';
         $value = str_replace(' ', '', $value);
 
-        if ($value === '' || str_contains($value, ',')) {
+        if ($value === '') {
             return null;
+        }
+
+        $hasComma = str_contains($value, ',');
+        $hasDot = str_contains($value, '.');
+
+        if ($hasComma) {
+            // Comma-decimal formats are not supported in v1 (e.g. 95,00).
+            // Only allow commas as thousands separators.
+            $validThousands = $hasDot
+                ? preg_match('/^\d{1,3}(,\d{3})+\.\d+$/', $value) === 1
+                : preg_match('/^\d{1,3}(,\d{3})+$/', $value) === 1;
+
+            if (!$validThousands) {
+                return null;
+            }
+
+            $value = str_replace(',', '', $value);
         }
 
         if (!preg_match('/^-?\d+(?:\.\d+)?$/', $value)) {

@@ -21,11 +21,18 @@ enum ConversationEventType: string
     case APPRAISAL_STARTED = 'appraisal.started';
     case APPRAISAL_QUESTION_ASKED = 'appraisal.question.asked';
     case APPRAISAL_ANSWER_RECORDED = 'appraisal.answer.recorded';
+    case APPRAISAL_ANSWER_NORMALIZATION_REQUESTED = 'appraisal.answer.normalization.requested';
+    case APPRAISAL_ANSWER_NORMALIZATION_COMPLETED = 'appraisal.answer.normalization.completed';
+    case APPRAISAL_ANSWER_NORMALIZATION_FAILED = 'appraisal.answer.normalization.failed';
+    case APPRAISAL_PREFLIGHT_FAILED = 'appraisal.preflight.failed';
+    case APPRAISAL_PREFLIGHT_PASSED = 'appraisal.preflight.passed';
     case APPRAISAL_CONFIRMATION_REQUESTED = 'appraisal.confirmation.requested';
     case APPRAISAL_CONFIRMED = 'appraisal.confirmed';
     case APPRAISAL_CANCELLED = 'appraisal.cancelled';
 
     // Valuation flow
+    case VALUATION_CONTACT_REQUESTED = 'valuation.contact.requested';
+    case VALUATION_CONTACT_CAPTURED = 'valuation.contact.captured';
     case VALUATION_REQUESTED = 'valuation.requested';
     case VALUATION_COMPLETED = 'valuation.completed';
     case VALUATION_FAILED = 'valuation.failed';
@@ -37,6 +44,11 @@ enum ConversationEventType: string
     case LEAD_QUESTION_ASKED = 'lead.question.asked';
     case LEAD_ANSWER_RECORDED = 'lead.answer.recorded';
     case LEAD_REQUESTED = 'lead.requested';
+
+    // AI response lifecycle
+    case ASSISTANT_RESPONSE_REQUESTED = 'assistant.response.requested';
+    case ASSISTANT_RESPONSE_COMPLETED = 'assistant.response.completed';
+    case ASSISTANT_RESPONSE_FAILED = 'assistant.response.failed';
 
     // Turn lifecycle telemetry (non-business events)
     case TURN_STARTED = 'turn.started';

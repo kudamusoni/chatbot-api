@@ -4,6 +4,7 @@ namespace Tests\Feature\Http\Widget;
 
 use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
+use App\Models\Lead;
 use App\Models\Valuation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithConversations;
@@ -267,6 +268,40 @@ class HistoryTest extends TestCase
             ->assertJson([
                 'state' => 'VALUATION_RUNNING',
             ]);
+    }
+
+    public function test_returns_valuation_contact_prefill_when_contact_gate_active(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_CONTACT_CAPTURE,
+            'context' => ['pending_intent' => 'expert_review'],
+        ]);
+
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'email_hash' => hash('sha256', 'jane@example.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
+
+        $response = $this->getJson('/api/widget/history?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+        ]));
+
+        $response->assertOk()
+            ->assertJsonPath('valuation_contact_required', true)
+            ->assertJsonPath('pending_intent', 'expert_review')
+            ->assertJsonPath('lead_id', $lead->id)
+            ->assertJsonPath('valuation_contact_prefill.email', 'jane@example.com')
+            ->assertJsonPath('valuation_contact_prefill.name', 'Jane Doe')
+            ->assertJsonPath('valuation_contact_prefill.phone', '+447700900123');
     }
 
     public function test_returns_valuation_ready_state_with_result(): void

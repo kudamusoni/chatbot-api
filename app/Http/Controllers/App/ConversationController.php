@@ -95,22 +95,38 @@ class ConversationController extends Controller
             ->map(fn (ConversationMessage $message) => ConversationMessagePresenter::present($message))
             ->values();
 
-        $leadId = Lead::query()
+        $leads = Lead::query()
             ->where('client_id', $currentClient->id())
             ->where('conversation_id', $id)
             ->orderByDesc('created_at')
-            ->value('id');
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (Lead $lead) => [
+                'id' => $lead->id,
+                'status' => $lead->status,
+                'created_at' => $lead->created_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
+                'updated_at' => $lead->updated_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
+            ])
+            ->values();
 
-        $valuationId = Valuation::query()
+        $valuations = Valuation::query()
             ->where('client_id', $currentClient->id())
             ->where('conversation_id', $id)
             ->orderByDesc('created_at')
-            ->value('id');
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (Valuation $valuation) => [
+                'id' => $valuation->id,
+                'status' => $valuation->status->value,
+                'created_at' => $valuation->created_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
+                'updated_at' => $valuation->updated_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
+            ])
+            ->values();
 
         return response()->json([
             'data' => $messages,
-            'lead_id' => $leadId,
-            'valuation_id' => $valuationId,
+            'leads' => $leads,
+            'valuations' => $valuations,
         ]);
     }
 

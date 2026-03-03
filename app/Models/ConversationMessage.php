@@ -20,6 +20,7 @@ class ConversationMessage extends Model
         'conversation_id',
         'client_id',
         'event_id',
+        'turn_id',
         'role',
         'content',
     ];

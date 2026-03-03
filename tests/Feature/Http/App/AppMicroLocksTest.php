@@ -31,6 +31,7 @@ class AppMicroLocksTest extends TestCase
             'user' => ['id', 'name', 'email', 'platform_role'],
             'active_client_id',
             'active_client' => ['id', 'name'],
+            'accessible_clients_count',
             'tenant_role',
             'permissions' => [
                 'can_manage_settings',
@@ -42,6 +43,7 @@ class AppMicroLocksTest extends TestCase
 
         $response->assertJsonPath('active_client_id', $client->id);
         $response->assertJsonPath('active_client.id', $client->id);
+        $response->assertJsonPath('accessible_clients_count', 1);
         $response->assertJsonPath('tenant_role', 'admin');
         $response->assertJsonPath('permissions.can_manage_settings', true);
         $response->assertJsonPath('permissions.can_manage_questions', true);

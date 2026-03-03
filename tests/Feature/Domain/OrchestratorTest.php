@@ -132,7 +132,7 @@ class OrchestratorTest extends TestCase
         $this->assertNull($conversation->appraisal_current_key);
     }
 
-    public function test_starts_lead_when_requested_from_valuation_ready(): void
+    public function test_requests_contact_gate_when_expert_review_is_requested_from_valuation_ready(): void
     {
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client, [
@@ -153,19 +153,19 @@ class OrchestratorTest extends TestCase
             ->orderBy('id')
             ->get();
 
-        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::LEAD_STARTED));
-        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::LEAD_QUESTION_ASKED));
-        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::ASSISTANT_MESSAGE_CREATED));
+        $this->assertTrue($events->contains(fn ($e) => $e->type === ConversationEventType::VALUATION_CONTACT_REQUESTED));
+        $this->assertFalse($events->contains(fn ($e) => $e->type === ConversationEventType::LEAD_STARTED));
+        $this->assertFalse($events->contains(fn ($e) => $e->type === ConversationEventType::LEAD_QUESTION_ASKED));
     }
 
-    public function test_requests_lead_identity_confirmation_when_latest_lead_exists(): void
+    public function test_submits_expert_review_when_contact_is_already_linked(): void
     {
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client, [
             'state' => ConversationState::VALUATION_READY,
         ]);
 
-        Lead::create([
+        $lead = Lead::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
             'name' => 'Jane Doe',
@@ -174,6 +174,8 @@ class OrchestratorTest extends TestCase
             'phone_normalized' => '+12025550110',
             'status' => 'REQUESTED',
         ]);
+        $leadId = (string) $lead->id;
+        $conversation->update(['valuation_contact_lead_id' => $leadId]);
 
         $eventRecorder = new ConversationEventRecorder();
         $orchestrator = new ConversationOrchestrator($eventRecorder);
@@ -187,17 +189,18 @@ class OrchestratorTest extends TestCase
 
         $this->assertTrue(
             ConversationEvent::where('conversation_id', $conversation->id)
-                ->where('type', ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED)
+                ->where('type', ConversationEventType::LEAD_REQUESTED)
+                ->where('payload->lead_id', $leadId)
                 ->exists()
         );
         $this->assertFalse(
             ConversationEvent::where('conversation_id', $conversation->id)
-                ->where('type', ConversationEventType::LEAD_STARTED)
+                ->where('type', ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED)
                 ->exists()
         );
     }
 
-    public function test_starts_lead_with_loose_intent_phrase_from_valuation_ready(): void
+    public function test_requests_contact_gate_with_loose_intent_phrase_from_valuation_ready(): void
     {
         $client = $this->makeClient();
         [$conversation, ] = $this->makeConversation($client, [
@@ -216,7 +219,8 @@ class OrchestratorTest extends TestCase
 
         $this->assertTrue(
             ConversationEvent::where('conversation_id', $conversation->id)
-                ->where('type', ConversationEventType::LEAD_STARTED)
+                ->where('type', ConversationEventType::VALUATION_CONTACT_REQUESTED)
+                ->where('payload->pending_intent', 'expert_review')
                 ->exists()
         );
     }

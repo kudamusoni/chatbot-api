@@ -12,6 +12,7 @@ use App\Http\Controllers\Widget\HistoryController;
 use App\Http\Controllers\Widget\LeadIdentityConfirmController;
 use App\Http\Controllers\Widget\ResetController;
 use App\Http\Controllers\Widget\SseController;
+use App\Http\Controllers\Widget\ValuationContactController;
 use App\Http\Controllers\Widget\ValuationRetryController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -26,6 +27,7 @@ Route::prefix('widget')->middleware('widget.origin')->group(function () {
     Route::post('chat', [ChatController::class, 'store']);
     Route::post('appraisal/confirm', [AppraisalConfirmController::class, 'store']);
     Route::post('lead/confirm-identity', [LeadIdentityConfirmController::class, 'store']);
+    Route::post('valuation/contact', [ValuationContactController::class, 'store']);
     Route::post('back-to-chat', [BackToChatController::class, 'store']);
     Route::post('valuation/retry', [ValuationRetryController::class, 'store']);
     Route::post('reset', [ResetController::class, 'store']);

@@ -78,6 +78,7 @@ class ResetController extends Controller
                     'lead_answers' => null,
                     'lead_current_key' => null,
                     'lead_identity_candidate' => null,
+                    'valuation_contact_lead_id' => null,
                     'last_event_id' => 0,
                     'last_activity_at' => null,
                 ]);

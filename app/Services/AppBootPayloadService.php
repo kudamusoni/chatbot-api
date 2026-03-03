@@ -13,6 +13,10 @@ class AppBootPayloadService
      */
     public function forUser(Request $request, User $user): array
     {
+        $accessibleClientsCount = $user->isPlatformAdmin()
+            ? Client::query()->count()
+            : $user->clients()->count();
+
         $activeClientId = $request->session()->get('active_client_id');
         $activeClient = null;
         $tenantRole = null;
@@ -49,6 +53,7 @@ class AppBootPayloadService
                 'requires_email_verification' => true,
                 'active_client_id' => $activeClientId,
                 'active_client' => $activeClient,
+                'accessible_clients_count' => $accessibleClientsCount,
                 'tenant_role' => $tenantRole,
                 'permissions' => [],
             ];
@@ -68,6 +73,7 @@ class AppBootPayloadService
             'requires_email_verification' => false,
             'active_client_id' => $activeClientId,
             'active_client' => $activeClient,
+            'accessible_clients_count' => $accessibleClientsCount,
             'tenant_role' => $tenantRole,
             'permissions' => [
                 'can_manage_settings' => $hasActiveClient && ($user->isSuperAdmin() || $hasManageTenantRights),
@@ -78,4 +84,3 @@ class AppBootPayloadService
         ];
     }
 }
-

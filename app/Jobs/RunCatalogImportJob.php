@@ -92,6 +92,7 @@ class RunCatalogImportJob implements ShouldQueue
             ];
 
             $errors = [];
+            $validRows = [];
             $headerIndex = array_flip($header);
 
             while (($row = fgetcsv($stream)) !== false) {
@@ -113,45 +114,71 @@ class RunCatalogImportJob implements ShouldQueue
                         'updated_at' => now(),
                     ];
 
-                    continue;
+                    // Strict import mode: one bad row fails the whole import.
+                    break;
                 }
 
-                $attrs = $validation['attrs'];
-
-                $exists = DB::table('product_catalog')
-                    ->where('client_id', $import->client_id)
-                    ->where('source', $attrs['source'])
-                    ->where('normalized_title_hash', $attrs['normalized_title_hash'])
-                    ->where('price', $attrs['price'])
-                    ->where('currency', $attrs['currency'])
-                    ->where('sold_at_key', $attrs['sold_at_key'])
-                    ->exists();
-
-                DB::table('product_catalog')->upsert(
-                    [array_merge($attrs, [
-                        'id' => (string) \Illuminate\Support\Str::uuid(),
-                        'client_id' => $import->client_id,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ])],
-                    ['client_id', 'source', 'normalized_title_hash', 'price', 'currency', 'sold_at_key'],
-                    ['title', 'description', 'low_estimate', 'high_estimate', 'sold_at', 'sold_at_key', 'updated_at']
-                );
-
-                if ($exists) {
-                    $totals['updated']++;
-                } else {
-                    $totals['inserted']++;
-                }
+                $validRows[] = $validation['attrs'];
             }
 
             fclose($stream);
 
-            DB::transaction(function () use ($import, $errors, $totals): void {
-                DB::table('catalog_import_errors')->where('import_id', $import->id)->delete();
-                if ($errors !== []) {
+            if ($errors !== []) {
+                DB::transaction(function () use ($import, $errors, $totals): void {
+                    DB::table('catalog_import_errors')->where('import_id', $import->id)->delete();
                     DB::table('catalog_import_errors')->insert($errors);
+
+                    $import->refresh();
+                    if ((int) $import->attempt !== $this->attemptNumber) {
+                        return;
+                    }
+
+                    $import->update([
+                        'status' => CatalogImportStatus::FAILED,
+                        'totals' => $totals,
+                        'errors_count' => count($errors),
+                        'errors_sample' => array_slice(array_map(fn ($e) => [
+                            'row_number' => $e['row_number'],
+                            'column' => $e['column'],
+                            'message' => $e['message'],
+                        ], $errors), 0, 10),
+                        'finished_at' => now(),
+                    ]);
+                });
+
+                return;
+            }
+
+            DB::transaction(function () use ($import, $validRows, &$totals): void {
+                foreach ($validRows as $attrs) {
+                    $exists = DB::table('product_catalog')
+                        ->where('client_id', $import->client_id)
+                        ->where('source', $attrs['source'])
+                        ->where('normalized_title_hash', $attrs['normalized_title_hash'])
+                        ->where('price', $attrs['price'])
+                        ->where('currency', $attrs['currency'])
+                        ->where('sold_at_key', $attrs['sold_at_key'])
+                        ->exists();
+
+                    DB::table('product_catalog')->upsert(
+                        [array_merge($attrs, [
+                            'id' => (string) \Illuminate\Support\Str::uuid(),
+                            'client_id' => $import->client_id,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ])],
+                        ['client_id', 'source', 'normalized_title_hash', 'price', 'currency', 'sold_at_key'],
+                        ['title', 'description', 'low_estimate', 'high_estimate', 'sold_at', 'sold_at_key', 'updated_at']
+                    );
+
+                    if ($exists) {
+                        $totals['updated']++;
+                    } else {
+                        $totals['inserted']++;
+                    }
                 }
+
+                DB::table('catalog_import_errors')->where('import_id', $import->id)->delete();
 
                 $import->refresh();
                 if ((int) $import->attempt !== $this->attemptNumber) {
@@ -159,19 +186,15 @@ class RunCatalogImportJob implements ShouldQueue
                 }
 
                 $rowsImported = (int) $totals['inserted'] + (int) $totals['updated'];
-                $finalStatus = $rowsImported > 0
+                $finalStatus = ($rowsImported > 0)
                     ? CatalogImportStatus::COMPLETED
                     : CatalogImportStatus::FAILED;
 
                 $import->update([
                     'status' => $finalStatus,
                     'totals' => $totals,
-                    'errors_count' => count($errors),
-                    'errors_sample' => array_slice(array_map(fn ($e) => [
-                        'row_number' => $e['row_number'],
-                        'column' => $e['column'],
-                        'message' => $e['message'],
-                    ], $errors), 0, 10),
+                    'errors_count' => 0,
+                    'errors_sample' => [],
                     'finished_at' => now(),
                 ]);
             });

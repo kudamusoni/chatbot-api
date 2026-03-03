@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\App\AuthController as AppAuthController;
 use App\Http\Controllers\App\AppraisalQuestionsController;
+use App\Http\Controllers\App\AiUsageController;
 use App\Http\Controllers\App\AnalyticsController;
 use App\Http\Controllers\App\CatalogImportController;
 use App\Http\Controllers\App\ClientContextController;
@@ -46,6 +47,7 @@ Route::prefix('app')
             Route::get('clients', [ClientContextController::class, 'index']);
             Route::post('clients/{client}/switch', [ClientContextController::class, 'switch']);
             Route::post('clients/clear', [ClientContextController::class, 'clear']);
+            Route::patch('account/profile', [AppAuthController::class, 'updateProfile']);
         });
 
         Route::middleware(['app.auth', 'app.verified', 'set.current.client'])->group(function () {
@@ -61,6 +63,7 @@ Route::prefix('app')
             Route::get('valuations/{id}', [ValuationController::class, 'show']);
             Route::get('analytics/summary', [AnalyticsController::class, 'summary']);
             Route::get('analytics/timeseries', [AnalyticsController::class, 'timeseries']);
+            Route::get('ai/usage', [AiUsageController::class, 'index']);
             Route::get('settings', [SettingsController::class, 'show']);
             Route::get('embed-code', [EmbedCodeController::class, 'show']);
             Route::get('catalog-imports', [CatalogImportController::class, 'index']);

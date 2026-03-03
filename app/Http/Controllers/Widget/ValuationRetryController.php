@@ -79,8 +79,14 @@ class ValuationRetryController extends Controller
         try {
             DB::transaction(function () use ($conversation, $failedValuation, $actionId) {
                 // Use same snapshot for retry (deterministic)
-                $inputSnapshot = $failedValuation->input_snapshot;
+                $inputSnapshot = Valuation::normalizeSnapshotForStorage(
+                    is_array($failedValuation->input_snapshot) ? $failedValuation->input_snapshot : []
+                );
                 $snapshotHash = $failedValuation->snapshot_hash;
+                $leadId = is_string($failedValuation->lead_id) ? trim($failedValuation->lead_id) : '';
+                if ($leadId === '') {
+                    throw new \RuntimeException('Cannot retry valuation without lead_id');
+                }
 
                 // Reset the failed valuation to PENDING so job can re-run
                 $failedValuation->update([
@@ -92,12 +98,13 @@ class ValuationRetryController extends Controller
                 $this->eventRecorder->record(
                     $conversation,
                     ConversationEventType::VALUATION_REQUESTED,
-                    [
-                        'snapshot_hash' => $snapshotHash,
-                        'input_snapshot' => $inputSnapshot,
-                        'conversation_id' => $conversation->id,
-                        'retry' => true,
-                    ],
+                        [
+                            'snapshot_hash' => $snapshotHash,
+                            'input_snapshot' => $inputSnapshot,
+                            'conversation_id' => $conversation->id,
+                            'lead_id' => $leadId,
+                            'retry' => true,
+                        ],
                     idempotencyKey: $actionId, // Use action_id for this specific retry
                     correlationId: $actionId
                 );

@@ -162,6 +162,7 @@ class OnboardingRegistrationAndVerificationTest extends TestCase
             ->assertJsonPath('requires_email_verification', true)
             ->assertJsonPath('user.verified', false)
             ->assertJsonPath('active_client.id', $client->id)
+            ->assertJsonPath('accessible_clients_count', 1)
             ->assertJsonPath('tenant_role', 'owner')
             ->assertJsonPath('permissions', []);
     }

@@ -52,7 +52,10 @@ class ChatController extends Controller
             $userResult = $this->eventRecorder->record(
                 $conversation,
                 ConversationEventType::USER_MESSAGE_CREATED,
-                ['content' => $text],
+                [
+                    'content' => $text,
+                    'turn_id' => $messageId,
+                ],
                 idempotencyKey: $messageId,
                 correlationId: $correlationId
             );

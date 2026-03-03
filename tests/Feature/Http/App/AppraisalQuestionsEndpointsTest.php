@@ -237,7 +237,35 @@ class AppraisalQuestionsEndpointsTest extends TestCase
             ->assertJsonValidationErrors(['key']);
     }
 
-    public function test_delete_hard_deletes_question(): void
+    public function test_delete_hard_deletes_non_mandatory_question(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $admin = User::factory()->create();
+        $admin->clients()->attach($client->id, ['role' => 'admin']);
+
+        $question = AppraisalQuestion::create([
+            'client_id' => $client->id,
+            'key' => 'size',
+            'label' => 'Label',
+            'input_type' => 'text',
+            'required' => true,
+            'order_index' => 1,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($admin, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->deleteJson("/app/appraisal-questions/{$question->id}")
+            ->assertOk()
+            ->assertJson(['ok' => true]);
+
+        $this->assertDatabaseMissing('appraisal_questions', [
+            'id' => $question->id,
+            'client_id' => $client->id,
+        ]);
+    }
+
+    public function test_delete_rejects_mandatory_default_question(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
         $admin = User::factory()->create();
@@ -256,13 +284,8 @@ class AppraisalQuestionsEndpointsTest extends TestCase
         $this->actingAs($admin, 'web')
             ->withSession(['active_client_id' => $client->id])
             ->deleteJson("/app/appraisal-questions/{$question->id}")
-            ->assertOk()
-            ->assertJson(['ok' => true]);
-
-        $this->assertDatabaseMissing('appraisal_questions', [
-            'id' => $question->id,
-            'client_id' => $client->id,
-        ]);
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['id']);
     }
 
     public function test_reorder_compacts_active_only_and_inactive_unchanged(): void

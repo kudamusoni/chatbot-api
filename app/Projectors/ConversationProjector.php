@@ -7,6 +7,7 @@ use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
 use App\Events\Conversation\ConversationEventRecorded;
 use App\Mail\LeadRequestedMail;
+use App\Mail\ValuationCompletedMail;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
 use App\Models\ConversationMessage;
@@ -57,6 +58,11 @@ class ConversationProjector
             ConversationEventType::APPRAISAL_STARTED => $this->projectAppraisalStarted($event),
             ConversationEventType::APPRAISAL_QUESTION_ASKED => $this->projectAppraisalQuestionAsked($event),
             ConversationEventType::APPRAISAL_ANSWER_RECORDED => $this->projectAppraisalAnswerRecorded($event),
+            ConversationEventType::APPRAISAL_ANSWER_NORMALIZATION_REQUESTED => null,
+            ConversationEventType::APPRAISAL_ANSWER_NORMALIZATION_COMPLETED => $this->projectAppraisalNormalizationCompleted($event),
+            ConversationEventType::APPRAISAL_ANSWER_NORMALIZATION_FAILED => $this->projectAppraisalNormalizationFailed($event),
+            ConversationEventType::APPRAISAL_PREFLIGHT_FAILED => $this->projectAppraisalPreflightFailed($event),
+            ConversationEventType::APPRAISAL_PREFLIGHT_PASSED => null,
             ConversationEventType::APPRAISAL_CONFIRMATION_REQUESTED => $this->projectAppraisalConfirmationRequested($event),
             ConversationEventType::APPRAISAL_CONFIRMED => $this->projectAppraisalConfirmed($event),
             ConversationEventType::APPRAISAL_CANCELLED => $this->projectAppraisalCancelled($event),
@@ -68,9 +74,15 @@ class ConversationProjector
             ConversationEventType::LEAD_ANSWER_RECORDED => $this->projectLeadAnswerRecorded($event),
             ConversationEventType::LEAD_REQUESTED => $this->projectLeadRequested($event),
 
+            ConversationEventType::VALUATION_CONTACT_REQUESTED => $this->projectValuationContactRequested($event),
+            ConversationEventType::VALUATION_CONTACT_CAPTURED => $this->projectValuationContactCaptured($event),
             ConversationEventType::VALUATION_REQUESTED => $this->projectValuationRequested($event),
             ConversationEventType::VALUATION_COMPLETED => $this->projectValuationCompleted($event),
             ConversationEventType::VALUATION_FAILED => $this->projectValuationFailed($event),
+
+            ConversationEventType::ASSISTANT_RESPONSE_REQUESTED => null,
+            ConversationEventType::ASSISTANT_RESPONSE_COMPLETED => $this->projectAssistantResponseCompleted($event),
+            ConversationEventType::ASSISTANT_RESPONSE_FAILED => $this->projectAssistantResponseFailed($event),
 
             ConversationEventType::TURN_STARTED,
             ConversationEventType::TURN_COMPLETED,
@@ -114,6 +126,7 @@ class ConversationProjector
                 'client_id' => $event->client_id,
                 'role' => $event->messageRole(),
                 'content' => $content,
+                'turn_id' => $event->payload['turn_id'] ?? null,
             ]
         );
     }
@@ -131,6 +144,10 @@ class ConversationProjector
                 'appraisal_answers' => [],
                 'appraisal_current_key' => null,
                 'appraisal_snapshot' => null,
+                'appraisal_snapshot_normalized' => null,
+                'normalization_meta' => null,
+                'last_ai_error_code' => null,
+                'valuation_contact_lead_id' => null,
             ]);
         }
     }
@@ -171,6 +188,103 @@ class ConversationProjector
         $conversation->update([
             'appraisal_answers' => $answers,
             'appraisal_current_key' => null,
+        ]);
+    }
+
+    protected function projectAppraisalNormalizationCompleted(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+        if (!$conversation) {
+            return;
+        }
+
+        $questionKey = (string) ($event->payload['question_key'] ?? '');
+        if ($questionKey === '') {
+            return;
+        }
+
+        $normalizedSnapshot = is_array($conversation->appraisal_snapshot_normalized)
+            ? $conversation->appraisal_snapshot_normalized
+            : [];
+        $normalizationMeta = is_array($conversation->normalization_meta)
+            ? $conversation->normalization_meta
+            : [];
+
+        $normalizedSnapshot[$questionKey] = $event->payload['normalized'] ?? null;
+        $normalizationMeta[$questionKey] = [
+            'confidence' => (float) ($event->payload['confidence'] ?? 0),
+            'candidates' => is_array($event->payload['candidates'] ?? null) ? $event->payload['candidates'] : [],
+            'needs_clarification' => (bool) ($event->payload['needs_clarification'] ?? false),
+            'clarifying_question' => $event->payload['clarifying_question'] ?? null,
+            'user_skipped' => (bool) ($event->payload['user_skipped'] ?? false),
+            'unresolved' => (bool) ($event->payload['unresolved'] ?? false),
+            'clarification_asked' => (bool) ($event->payload['clarification_asked'] ?? false),
+        ];
+
+        $conversation->update([
+            'appraisal_snapshot_normalized' => $normalizedSnapshot,
+            'normalization_meta' => $normalizationMeta,
+            'last_ai_error_code' => null,
+        ]);
+    }
+
+    protected function projectAppraisalNormalizationFailed(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+        if (!$conversation) {
+            return;
+        }
+
+        $conversation->update([
+            'last_ai_error_code' => $event->payload['error_code'] ?? 'AI_NORMALIZATION_FAILED',
+        ]);
+    }
+
+    protected function projectAppraisalPreflightFailed(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+        if (!$conversation) {
+            return;
+        }
+
+        $normalizationMeta = is_array($conversation->normalization_meta)
+            ? $conversation->normalization_meta
+            : [];
+        $normalizationMeta['__preflight'] = [
+            'status' => 'FAILED',
+            'details' => is_array($event->payload['preflight_details'] ?? null) ? $event->payload['preflight_details'] : [],
+            'missing_fields' => is_array($event->payload['missing_fields'] ?? null) ? $event->payload['missing_fields'] : [],
+            'low_confidence_fields' => is_array($event->payload['low_confidence_fields'] ?? null) ? $event->payload['low_confidence_fields'] : [],
+        ];
+
+        $conversation->update([
+            'state' => ConversationState::APPRAISAL_INTAKE,
+            'appraisal_current_key' => $event->payload['next_question_key'] ?? null,
+            'normalization_meta' => $normalizationMeta,
+        ]);
+    }
+
+    protected function projectAssistantResponseCompleted(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+        if (!$conversation) {
+            return;
+        }
+
+        $conversation->update([
+            'last_ai_error_code' => null,
+        ]);
+    }
+
+    protected function projectAssistantResponseFailed(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+        if (!$conversation) {
+            return;
+        }
+
+        $conversation->update([
+            'last_ai_error_code' => $event->payload['error_code'] ?? 'AI_ASSISTANT_FAILED',
         ]);
     }
 
@@ -218,6 +332,10 @@ class ConversationProjector
                 'state' => ConversationState::CHAT,
                 'appraisal_current_key' => null,
                 'appraisal_snapshot' => null,
+                'appraisal_snapshot_normalized' => null,
+                'normalization_meta' => null,
+                'last_ai_error_code' => null,
+                'valuation_contact_lead_id' => null,
             ]);
         }
     }
@@ -338,12 +456,115 @@ class ConversationProjector
         $phoneRaw = (string) ($event->payload['phone_raw'] ?? '');
         $phoneNormalized = $this->leadPiiNormalizer->normalizePhone($phoneRaw);
 
-        $lead = Lead::firstOrCreate(
-            ['request_event_id' => $event->id],
+        $lead = null;
+        $shouldNotify = false;
+        $providedLeadId = $event->payload['lead_id'] ?? null;
+
+        if (is_string($providedLeadId) && trim($providedLeadId) !== '') {
+            $lead = Lead::query()
+                ->where('id', $providedLeadId)
+                ->where('conversation_id', $event->conversation_id)
+                ->where('client_id', $event->client_id)
+                ->first();
+
+            if ($lead && $lead->request_event_id === null) {
+                $lead->update([
+                    'request_event_id' => $event->id,
+                    'name' => $event->payload['name'] ?? $lead->name,
+                    'email' => $email !== '' ? $email : $lead->email,
+                    'email_hash' => $email !== '' ? $this->leadPiiNormalizer->emailHash($email) : $lead->email_hash,
+                    'phone_raw' => $phoneRaw !== '' ? $phoneRaw : $lead->phone_raw,
+                    'phone_normalized' => $phoneNormalized !== '' ? $phoneNormalized : $lead->phone_normalized,
+                    'phone_hash' => $phoneNormalized !== '' ? $this->leadPiiNormalizer->phoneHash($phoneRaw) : $lead->phone_hash,
+                ]);
+                $shouldNotify = true;
+            }
+        }
+
+        if (!$lead) {
+            $lead = Lead::firstOrCreate(
+                ['request_event_id' => $event->id],
+                [
+                    'conversation_id' => $event->conversation_id,
+                    'client_id' => $event->client_id,
+                    'name' => $event->payload['name'] ?? '',
+                    'email' => $email,
+                    'email_hash' => $email !== '' ? $this->leadPiiNormalizer->emailHash($email) : null,
+                    'phone_raw' => $phoneRaw,
+                    'phone_normalized' => $phoneNormalized,
+                    'phone_hash' => $phoneNormalized !== '' ? $this->leadPiiNormalizer->phoneHash($phoneRaw) : null,
+                    'status' => 'REQUESTED',
+                ]
+            );
+            $shouldNotify = $lead->wasRecentlyCreated;
+        }
+
+        if ($lead && $shouldNotify) {
+            $this->notifyClientUsersOfLead($lead);
+        }
+
+        $context = is_array($conversation->context) ? $conversation->context : [];
+        unset($context['pending_intent']);
+
+        $conversation->update([
+            'state' => ConversationState::CHAT,
+            'lead_current_key' => null,
+            'lead_answers' => null,
+            'lead_identity_candidate' => null,
+            'context' => $context,
+        ]);
+    }
+
+    protected function projectValuationContactRequested(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        $context = is_array($conversation->context) ? $conversation->context : [];
+        $pendingIntent = $event->payload['pending_intent'] ?? null;
+        if (is_string($pendingIntent) && $pendingIntent !== '') {
+            $context['pending_intent'] = $pendingIntent;
+        } else {
+            unset($context['pending_intent']);
+        }
+
+        $conversation->update([
+            'state' => ConversationState::VALUATION_CONTACT_CAPTURE,
+            'context' => $context,
+        ]);
+    }
+
+    protected function projectValuationContactCaptured(ConversationEvent $event): void
+    {
+        $conversation = Conversation::find($event->conversation_id);
+
+        if (!$conversation) {
+            return;
+        }
+
+        $email = (string) ($event->payload['email'] ?? '');
+        $phoneRaw = (string) ($event->payload['phone_raw'] ?? '');
+        $phoneNormalized = $this->leadPiiNormalizer->normalizePhone($phoneRaw);
+        $leadId = (string) ($event->payload['lead_id'] ?? '');
+        $leadCaptureActionId = (string) ($event->payload['action_id'] ?? '');
+
+        if ($leadId === '' || $leadCaptureActionId === '') {
+            return;
+        }
+
+        Lead::firstOrCreate(
             [
-                'conversation_id' => $event->conversation_id,
                 'client_id' => $event->client_id,
-                'name' => $event->payload['name'] ?? '',
+                'conversation_id' => $event->conversation_id,
+                'lead_capture_action_id' => $leadCaptureActionId,
+            ],
+            [
+                'id' => $leadId,
+                'request_event_id' => $event->id,
+                'name' => (string) ($event->payload['name'] ?? ''),
                 'email' => $email,
                 'email_hash' => $email !== '' ? $this->leadPiiNormalizer->emailHash($email) : null,
                 'phone_raw' => $phoneRaw,
@@ -353,15 +574,16 @@ class ConversationProjector
             ]
         );
 
-        if ($lead->wasRecentlyCreated) {
-            $this->notifyClientUsersOfLead($lead);
-        }
+        $context = is_array($conversation->context) ? $conversation->context : [];
+        $pendingIntent = isset($context['pending_intent']) && is_string($context['pending_intent'])
+            ? trim((string) $context['pending_intent'])
+            : null;
 
         $conversation->update([
-            'state' => ConversationState::CHAT,
-            'lead_current_key' => null,
-            'lead_answers' => null,
-            'lead_identity_candidate' => null,
+            'state' => $pendingIntent === 'expert_review'
+                ? ConversationState::VALUATION_CONTACT_CAPTURE
+                : ConversationState::APPRAISAL_CONFIRM,
+            'valuation_contact_lead_id' => $leadId,
         ]);
     }
 
@@ -398,6 +620,11 @@ class ConversationProjector
             return;
         }
 
+        $leadId = $event->payload['lead_id'] ?? null;
+        if (!is_string($leadId) || trim($leadId) === '') {
+            throw new \RuntimeException('valuation.requested missing lead_id');
+        }
+
         // Update conversation state
         $conversation->update([
             'state' => ConversationState::VALUATION_RUNNING,
@@ -406,12 +633,26 @@ class ConversationProjector
         // Handle both new structured payload and legacy flat payload
         if (isset($event->payload['input_snapshot'])) {
             // New structured format
-            $inputSnapshot = $event->payload['input_snapshot'];
+            $inputSnapshot = Valuation::normalizeSnapshotForStorage(
+                is_array($event->payload['input_snapshot']) ? $event->payload['input_snapshot'] : []
+            );
             $snapshotHash = $event->payload['snapshot_hash']
                 ?? Valuation::generateSnapshotHash($inputSnapshot);
         } else {
             // Legacy flat format (payload IS the snapshot)
-            $inputSnapshot = $event->payload;
+            $legacyPayload = is_array($event->payload) ? $event->payload : [];
+            unset(
+                $legacyPayload['lead_id'],
+                $legacyPayload['snapshot_hash'],
+                $legacyPayload['conversation_id'],
+                $legacyPayload['preflight_status'],
+                $legacyPayload['preflight_details'],
+                $legacyPayload['confidence_cap'],
+                $legacyPayload['retry']
+            );
+            $inputSnapshot = Valuation::normalizeSnapshotForStorage(
+                $legacyPayload
+            );
             $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
         }
 
@@ -419,13 +660,21 @@ class ConversationProjector
         Valuation::firstOrCreate(
             [
                 'conversation_id' => $event->conversation_id,
+                'client_id' => $event->client_id,
                 'snapshot_hash' => $snapshotHash,
             ],
             [
-                'client_id' => $event->client_id,
                 'request_event_id' => $event->id,
+                'lead_id' => $leadId,
                 'status' => ValuationStatus::PENDING,
                 'input_snapshot' => $inputSnapshot,
+                'preflight_status' => $event->payload['preflight_status'] ?? null,
+                'preflight_details' => is_array($event->payload['preflight_details'] ?? null)
+                    ? $event->payload['preflight_details']
+                    : null,
+                'confidence_cap' => isset($event->payload['confidence_cap'])
+                    ? (float) $event->payload['confidence_cap']
+                    : null,
             ]
         );
     }
@@ -459,6 +708,7 @@ class ConversationProjector
                 ->first();
         } else {
             $valuation = Valuation::where('conversation_id', $event->conversation_id)
+                ->where('client_id', $event->client_id)
                 ->where('snapshot_hash', $snapshotHash)
                 ->first();
         }
@@ -466,7 +716,27 @@ class ConversationProjector
         if ($valuation && !$valuation->status->isTerminal()) {
             $result = $event->payload['result'] ?? [];
             $valuation->markCompleted($result);
+            $this->notifyLeadOfValuationCompleted($valuation, is_array($result) ? $result : []);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function notifyLeadOfValuationCompleted(Valuation $valuation, array $result): void
+    {
+        $lead = $valuation->lead;
+        if (!$lead) {
+            return;
+        }
+
+        $email = is_string($lead->email) ? trim($lead->email) : '';
+        if ($email === '') {
+            return;
+        }
+
+        $clientName = (string) ($valuation->client?->name ?? 'your company');
+        Mail::to($email)->queue(new ValuationCompletedMail($clientName, $lead, $valuation, $result));
     }
 
     /**
@@ -492,6 +762,7 @@ class ConversationProjector
 
         if ($snapshotHash) {
             $valuation = Valuation::where('conversation_id', $event->conversation_id)
+                ->where('client_id', $event->client_id)
                 ->where('snapshot_hash', $snapshotHash)
                 ->first();
 

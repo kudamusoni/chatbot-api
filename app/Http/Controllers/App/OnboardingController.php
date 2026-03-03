@@ -193,6 +193,7 @@ class OnboardingController extends Controller
 
         return response()->json([
             'client_name' => (string) ($invite->client?->name ?? ''),
+            'email' => (string) $invite->email,
             'role' => $invite->role,
             'expires_at' => $invite->expires_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
         ]);

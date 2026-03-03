@@ -30,7 +30,10 @@ class ValuationEngine
         'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
         'of', 'with', 'by', 'from', 'is', 'it', 'as', 'be', 'was', 'were',
         'unknown', 'n/a', 'na', 'none', 'not', 'no',
+        'old', 'used', 'year', 'years', 'condition', 'decent', 'good',
     ];
+    private const ITEM_TYPE_MIN_TOKENS = 1;
+    private const MIN_RELEVANT_COMPS = 3;
 
     /**
      * Compute a valuation based on the input snapshot.
@@ -42,8 +45,20 @@ class ValuationEngine
      */
     public function compute(string $clientId, array $inputSnapshot, string $currency = 'GBP'): array
     {
-        // 1. Extract and clean search terms from snapshot
-        $terms = $this->extractSearchTerms($inputSnapshot);
+        [$rawSnapshot, $normalizedSnapshot, $normalizationMeta] = $this->extractSnapshotSections($inputSnapshot);
+        $snapshotCurrency = $this->snapshotCurrency($rawSnapshot);
+        if ($snapshotCurrency !== null) {
+            $currency = $snapshotCurrency;
+        }
+        $keyValues = $this->searchKeyValues($rawSnapshot, $normalizedSnapshot, $normalizationMeta);
+        $preferredTerms = $this->normalizedTerms($normalizedSnapshot, $normalizationMeta);
+        $rawTerms = $this->extractSearchTerms($rawSnapshot);
+        $keyTerms = [];
+        foreach ($keyValues as $value) {
+            $keyTerms = [...$keyTerms, ...$this->extractSearchTerms([$value])];
+        }
+        $terms = array_values(array_unique([...$preferredTerms, ...$keyTerms, ...$rawTerms]));
+        $terms = array_slice($terms, 0, 12);
 
         if (empty($terms)) {
             return $this->zeroMatchResult();
@@ -55,6 +70,13 @@ class ValuationEngine
             ->searchTerms($terms)
             ->limit(self::MAX_COMPS)
             ->get();
+
+        if ($comps->isEmpty()) {
+            return $this->zeroMatchResult();
+        }
+
+        $comps = $this->prioritizePreferredComps($comps, $normalizedSnapshot, $normalizationMeta);
+        $comps = $this->scoreAndFilterComps($comps, $keyValues, $rawTerms);
 
         if ($comps->isEmpty()) {
             return $this->zeroMatchResult();
@@ -83,6 +105,19 @@ class ValuationEngine
 
         // 7. Calculate confidence using explicit rubric
         $confidence = $this->computeConfidence($count, $signalsUsed['sold']);
+        if (
+            isset($keyValues['item_type'])
+            && is_string($keyValues['item_type'])
+            && trim($keyValues['item_type']) !== ''
+            && $count < self::MIN_RELEVANT_COMPS
+        ) {
+            // Deterministic low-sample guard for anchored lookups.
+            $confidence = min($confidence, 1);
+        }
+        $cap = $this->resolveConfidenceCap($normalizationMeta);
+        if ($cap !== null) {
+            $confidence = min($confidence, $cap);
+        }
 
         // 8. Build sample of matched comps for transparency/debugging
         $matchedCompsSample = $this->buildCompsSample($comps);
@@ -96,6 +131,30 @@ class ValuationEngine
             'signals_used' => $signalsUsed,
             'matched_comps_sample' => $matchedCompsSample,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $normalizationMeta
+     */
+    private function resolveConfidenceCap(array $normalizationMeta): ?float
+    {
+        $preflight = is_array($normalizationMeta['__preflight'] ?? null)
+            ? $normalizationMeta['__preflight']
+            : [];
+        $explicitCap = $preflight['confidence_cap'] ?? null;
+        if (is_numeric($explicitCap)) {
+            return max(0.0, min(1.0, (float) $explicitCap));
+        }
+
+        $status = (string) ($preflight['status'] ?? '');
+        if ($status === 'SKIPPED') {
+            return (float) config('appraisal.confidence_caps.skipped', 0.5);
+        }
+        if ($status === 'AI_FAILED') {
+            return (float) config('appraisal.confidence_caps.ai_failed', 0.4);
+        }
+
+        return null;
     }
 
     /**
@@ -162,6 +221,263 @@ class ValuationEngine
 
         // Deduplicate and limit to top 5 terms
         return array_slice(array_unique($terms), 0, 5);
+    }
+
+    /**
+     * @param array<string, mixed> $inputSnapshot
+     * @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>}
+     */
+    private function extractSnapshotSections(array $inputSnapshot): array
+    {
+        $raw = is_array($inputSnapshot['raw'] ?? null) ? $inputSnapshot['raw'] : $inputSnapshot;
+        $normalized = is_array($inputSnapshot['normalized'] ?? null) ? $inputSnapshot['normalized'] : [];
+        $meta = is_array($inputSnapshot['normalization_meta'] ?? null) ? $inputSnapshot['normalization_meta'] : [];
+
+        return [$raw, $normalized, $meta];
+    }
+
+    /**
+     * @param array<string, mixed> $normalized
+     * @param array<string, mixed> $meta
+     * @return list<string>
+     */
+    private function normalizedTerms(array $normalized, array $meta): array
+    {
+        $threshold = (float) config('ai.normalization.confidence_threshold', 0.75);
+        $terms = [];
+
+        foreach ($normalized as $key => $value) {
+            if (!is_string($value) || trim($value) === '') {
+                continue;
+            }
+
+            $confidence = (float) data_get($meta, "{$key}.confidence", 0);
+            if ($confidence < $threshold) {
+                continue;
+            }
+
+            $words = $this->extractSearchTerms([$value]);
+            foreach ($words as $word) {
+                $terms[] = $word;
+            }
+        }
+
+        return array_values(array_unique($terms));
+    }
+
+    private function prioritizePreferredComps($comps, array $normalized, array $meta)
+    {
+        $priorityKeys = ['maker', 'item_type', 'model'];
+        $priorityValues = [];
+        $threshold = (float) config('ai.normalization.confidence_threshold', 0.75);
+
+        foreach ($priorityKeys as $key) {
+            $value = $normalized[$key] ?? null;
+            $confidence = (float) data_get($meta, "{$key}.confidence", 0);
+            if (is_string($value) && trim($value) !== '' && $confidence >= $threshold) {
+                $priorityValues[] = mb_strtolower(trim($value));
+            }
+        }
+
+        if ($priorityValues === []) {
+            return $comps;
+        }
+
+        $scored = $comps->map(function (ProductCatalog $comp) use ($priorityValues) {
+            $haystack = mb_strtolower((string) ($comp->normalized_text ?? ''));
+            $score = 0;
+            foreach ($priorityValues as $value) {
+                if (str_contains($haystack, $value)) {
+                    $score++;
+                }
+            }
+
+            return ['comp' => $comp, 'score' => $score];
+        });
+
+        $maxScore = (int) $scored->max('score');
+        if ($maxScore <= 0) {
+            return $comps;
+        }
+
+        return $scored
+            ->filter(fn (array $item) => $item['score'] > 0)
+            ->sortByDesc('score')
+            ->pluck('comp')
+            ->values();
+    }
+
+    /**
+     * @param array<string, string|null> $keyValues
+     * @param list<string> $rawTerms
+     */
+    private function scoreAndFilterComps($comps, array $keyValues, array $rawTerms)
+    {
+        $itemType = mb_strtolower(trim((string) ($keyValues['item_type'] ?? '')));
+        $maker = mb_strtolower(trim((string) ($keyValues['maker'] ?? '')));
+        $model = mb_strtolower(trim((string) ($keyValues['model'] ?? '')));
+        $itemTypeTokens = $itemType !== '' ? $this->extractSearchTerms([$itemType]) : [];
+        $makerTokens = $maker !== '' ? $this->extractSearchTerms([$maker]) : [];
+        $modelTokens = $model !== '' ? $this->extractSearchTerms([$model]) : [];
+        $rawTerms = array_values(array_unique($rawTerms));
+
+        $scored = $comps->map(function (ProductCatalog $comp) use (
+            $itemType,
+            $maker,
+            $model,
+            $itemTypeTokens,
+            $makerTokens,
+            $modelTokens,
+            $rawTerms
+        ) {
+            $haystack = mb_strtolower((string) ($comp->normalized_text ?? ''));
+            $score = 0;
+            $makerMatched = false;
+            $modelMatched = false;
+
+            if ($itemType !== '') {
+                $itemTypeMatched = false;
+                if ($this->containsPhrase($haystack, $itemType)) {
+                    $score += 8;
+                    $itemTypeMatched = true;
+                } else {
+                    $tokenHits = 0;
+                    foreach ($itemTypeTokens as $token) {
+                        if ($this->containsWholeWord($haystack, $token)) {
+                            $tokenHits++;
+                        }
+                    }
+                    if ($tokenHits >= self::ITEM_TYPE_MIN_TOKENS) {
+                        $score += 5;
+                        $itemTypeMatched = true;
+                    }
+                }
+
+                if (!$itemTypeMatched) {
+                    return null;
+                }
+            }
+
+            if ($maker !== '') {
+                if ($this->containsPhrase($haystack, $maker)) {
+                    $score += 4;
+                    $makerMatched = true;
+                } else {
+                    foreach ($makerTokens as $token) {
+                        if ($this->containsWholeWord($haystack, $token)) {
+                            $score += 2;
+                            $makerMatched = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ($model !== '') {
+                if ($this->containsPhrase($haystack, $model)) {
+                    $score += 4;
+                    $modelMatched = true;
+                } else {
+                    foreach ($modelTokens as $token) {
+                        if ($this->containsWholeWord($haystack, $token)) {
+                            $score += 2;
+                            $modelMatched = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If user gave maker/model, require at least one of them to match.
+            if (($maker !== '' || $model !== '') && !$makerMatched && !$modelMatched) {
+                return null;
+            }
+
+            $otherHits = 0;
+            foreach ($rawTerms as $token) {
+                if ($this->containsWholeWord($haystack, $token)) {
+                    $otherHits++;
+                }
+            }
+            $score += min(3, $otherHits);
+
+            if ($score < 2) {
+                return null;
+            }
+
+            return ['comp' => $comp, 'score' => $score];
+        })->filter();
+
+        return $scored
+            ->sortByDesc('score')
+            ->pluck('comp')
+            ->values();
+    }
+
+    private function containsPhrase(string $haystack, string $phrase): bool
+    {
+        $phrase = trim($phrase);
+        if ($phrase === '') {
+            return false;
+        }
+
+        $pattern = '/\b' . preg_quote($phrase, '/') . '\b/u';
+
+        return preg_match($pattern, $haystack) === 1;
+    }
+
+    private function containsWholeWord(string $haystack, string $word): bool
+    {
+        $word = trim($word);
+        if ($word === '') {
+            return false;
+        }
+
+        $pattern = '/\b' . preg_quote($word, '/') . '\b/u';
+
+        return preg_match($pattern, $haystack) === 1;
+    }
+
+    /**
+     * @param array<string,mixed> $raw
+     * @param array<string,mixed> $normalized
+     * @param array<string,mixed> $meta
+     * @return array{maker:?string,model:?string,item_type:?string}
+     */
+    private function searchKeyValues(array $raw, array $normalized, array $meta): array
+    {
+        $keys = ['maker', 'model', 'item_type'];
+        $result = ['maker' => null, 'model' => null, 'item_type' => null];
+        $threshold = (float) config('appraisal.resolved_confidence_threshold', 0.75);
+
+        foreach ($keys as $key) {
+            $normalizedValue = $normalized[$key] ?? null;
+            $confidence = (float) data_get($meta, "{$key}.confidence", 0);
+            if (is_string($normalizedValue) && trim($normalizedValue) !== '' && $confidence >= $threshold) {
+                $result[$key] = trim($normalizedValue);
+                continue;
+            }
+
+            $rawValue = $raw[$key] ?? null;
+            if (is_string($rawValue) && trim($rawValue) !== '') {
+                $result[$key] = trim($rawValue);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $rawSnapshot
+     */
+    private function snapshotCurrency(array $rawSnapshot): ?string
+    {
+        $currency = $rawSnapshot['currency'] ?? null;
+        if (!is_string($currency) || trim($currency) === '') {
+            return null;
+        }
+
+        return strtoupper(trim($currency));
     }
 
     /**

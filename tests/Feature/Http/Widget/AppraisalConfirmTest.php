@@ -5,6 +5,7 @@ namespace Tests\Feature\Http\Widget;
 use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Models\ConversationEvent;
+use App\Models\Lead;
 use App\Models\Valuation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -29,6 +30,18 @@ class AppraisalConfirmTest extends TestCase
                 'age' => 'circa 1950',
             ],
         ]);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'email_hash' => hash('sha256', 'jane@example.com'),
+            'phone_raw' => '+447700900000',
+            'phone_normalized' => '+447700900000',
+            'phone_hash' => hash('sha256', '+447700900000'),
+            'status' => 'REQUESTED',
+        ]);
+        $conversation->update(['valuation_contact_lead_id' => $lead->id]);
 
         $actionId = (string) Str::uuid();
 
@@ -64,6 +77,18 @@ class AppraisalConfirmTest extends TestCase
                 'age' => '1970',
             ],
         ]);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'email_hash' => hash('sha256', 'jane@example.com'),
+            'phone_raw' => '+447700900000',
+            'phone_normalized' => '+447700900000',
+            'phone_hash' => hash('sha256', '+447700900000'),
+            'status' => 'REQUESTED',
+        ]);
+        $conversation->update(['valuation_contact_lead_id' => $lead->id]);
 
         $actionId = (string) Str::uuid();
         $payload = [
@@ -95,6 +120,18 @@ class AppraisalConfirmTest extends TestCase
             'state' => ConversationState::APPRAISAL_CONFIRM,
             'appraisal_snapshot' => $snapshot,
         ]);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'email_hash' => hash('sha256', 'jane@example.com'),
+            'phone_raw' => '+447700900000',
+            'phone_normalized' => '+447700900000',
+            'phone_hash' => hash('sha256', '+447700900000'),
+            'status' => 'REQUESTED',
+        ]);
+        $conversation->update(['valuation_contact_lead_id' => $lead->id]);
 
         ConversationEvent::create([
             'conversation_id' => $conversation->id,
@@ -103,6 +140,7 @@ class AppraisalConfirmTest extends TestCase
             'payload' => [
                 'snapshot_hash' => $snapshotHash,
                 'input_snapshot' => $snapshot,
+                'lead_id' => $lead->id,
             ],
             'correlation_id' => (string) Str::uuid(),
             'idempotency_key' => $snapshotHash,
@@ -304,6 +342,82 @@ class AppraisalConfirmTest extends TestCase
         $this->assertSame(0, ConversationEvent::where('conversation_id', $conversation->id)->count());
     }
 
+    public function test_confirm_in_valuation_contact_capture_short_circuits_with_contact_required(): void
+    {
+        $client = $this->makeClient();
+        [, $token] = $this->makeConversation($client, [
+            'state' => ConversationState::VALUATION_CONTACT_CAPTURE,
+        ]);
+
+        $this->postJson('/api/widget/appraisal/confirm', [
+            'client_id' => $client->id,
+            'session_token' => $token,
+            'action_id' => (string) Str::uuid(),
+            'confirm' => true,
+        ])->assertOk()
+            ->assertJsonPath('blocked', true)
+            ->assertJsonPath('reason_code', 'VALUATION_CONTACT_REQUIRED')
+            ->assertJsonPath('pending_intent', null);
+    }
+
+    public function test_confirm_blocks_with_contact_required_when_contact_not_captured(): void
+    {
+        $client = $this->makeClient();
+        [$conversation, $token] = $this->makeConversation($client, [
+            'state' => ConversationState::APPRAISAL_CONFIRM,
+            'appraisal_snapshot' => [
+                'maker' => 'Royal Doulton',
+                'model' => 'Bunnykins',
+                'item_type' => 'vase',
+            ],
+        ]);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'email_hash' => hash('sha256', 'jane@example.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
+
+        $response = $this->postJson('/api/widget/appraisal/confirm', [
+            'client_id' => $client->id,
+            'session_token' => $token,
+            'action_id' => (string) Str::uuid(),
+            'confirm' => true,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('blocked', true)
+            ->assertJsonPath('reason_code', 'VALUATION_CONTACT_REQUIRED')
+            ->assertJsonPath('pending_intent', 'valuation')
+            ->assertJsonPath('lead_id', $lead->id)
+            ->assertJsonPath('valuation_contact_prefill.email', 'jane@example.com')
+            ->assertJsonPath('valuation_contact_prefill.name', 'Jane Doe')
+            ->assertJsonPath('valuation_contact_prefill.phone', '+447700900123');
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::VALUATION_CONTACT_CAPTURE, $conversation->state);
+        $this->assertTrue(
+            ConversationEvent::query()
+                ->where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::VALUATION_CONTACT_REQUESTED)
+                ->where('payload->pending_intent', 'valuation')
+                ->where('payload->lead_id', $lead->id)
+                ->where('payload->valuation_contact_prefill->email', 'jane@example.com')
+                ->exists()
+        );
+        $this->assertFalse(
+            ConversationEvent::query()
+                ->where('conversation_id', $conversation->id)
+                ->where('type', ConversationEventType::VALUATION_REQUESTED)
+                ->exists()
+        );
+    }
+
     public function test_cancel_from_wrong_state_returns_error(): void
     {
         $client = $this->makeClient();
@@ -318,8 +432,8 @@ class AppraisalConfirmTest extends TestCase
             'confirm' => false,
         ]);
 
-        $response->assertStatus(409)
-            ->assertJson(['error' => 'Conversation is not awaiting confirmation']);
+        $response->assertOk()
+            ->assertJsonPath('blocked', false);
 
         // No events should be created
         $this->assertSame(0, ConversationEvent::where('conversation_id', $conversation->id)->count());

@@ -47,12 +47,15 @@ class ChatTest extends TestCase
             ->orderBy('id')
             ->get();
         $this->assertCount(4, $events);
+        $this->assertSame($messageId, $events[0]->payload['turn_id'] ?? null);
 
         // Should create 2 projected messages - ordered by event_id
         $messages = ConversationMessage::where('conversation_id', $conversation->id)
             ->orderBy('event_id')
             ->get();
         $this->assertCount(2, $messages);
+        $this->assertSame($messageId, $messages[0]->turn_id);
+        $this->assertSame($messageId, $messages[1]->turn_id);
 
         // First message should be user, second should be assistant
         $this->assertSame('user', $messages[0]->role);
@@ -80,7 +83,7 @@ class ChatTest extends TestCase
             ->exists());
     }
 
-    public function test_chat_triggers_lead_intake_from_valuation_ready(): void
+    public function test_chat_requests_contact_gate_for_expert_review_from_valuation_ready(): void
     {
         $client = $this->makeClient();
         [$conversation, $rawToken] = $this->makeConversation($client, [
@@ -97,15 +100,18 @@ class ChatTest extends TestCase
         $response->assertOk();
 
         $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::VALUATION_CONTACT_REQUESTED)
+            ->where('payload->pending_intent', 'expert_review')
+            ->exists());
+        $this->assertFalse(ConversationEvent::where('conversation_id', $conversation->id)
             ->where('type', ConversationEventType::LEAD_STARTED)
             ->exists());
-        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
-            ->where('type', ConversationEventType::LEAD_QUESTION_ASKED)
-            ->where('payload->question_key', 'name')
-            ->exists());
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::VALUATION_CONTACT_CAPTURE, $conversation->state);
     }
 
-    public function test_chat_triggers_lead_intake_from_loose_phrase(): void
+    public function test_chat_requests_contact_gate_from_loose_expert_review_phrase(): void
     {
         $client = $this->makeClient();
         [$conversation, $rawToken] = $this->makeConversation($client, [
@@ -122,18 +128,19 @@ class ChatTest extends TestCase
         $response->assertOk();
 
         $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
-            ->where('type', ConversationEventType::LEAD_STARTED)
+            ->where('type', ConversationEventType::VALUATION_CONTACT_REQUESTED)
+            ->where('payload->pending_intent', 'expert_review')
             ->exists());
     }
 
-    public function test_chat_requests_lead_identity_confirmation_when_previous_lead_exists(): void
+    public function test_chat_submits_expert_review_immediately_when_contact_exists(): void
     {
         $client = $this->makeClient();
         [$conversation, $rawToken] = $this->makeConversation($client, [
             'state' => ConversationState::VALUATION_READY,
         ]);
 
-        Lead::create([
+        $lead = Lead::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
             'name' => 'Jane Doe',
@@ -142,6 +149,7 @@ class ChatTest extends TestCase
             'phone_normalized' => '+12025550110',
             'status' => 'REQUESTED',
         ]);
+        $conversation->update(['valuation_contact_lead_id' => $lead->id]);
 
         $response = $this->postJson('/api/widget/chat', [
             'client_id' => $client->id,
@@ -153,14 +161,19 @@ class ChatTest extends TestCase
         $response->assertOk();
 
         $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
-            ->where('type', ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED)
+            ->where('type', ConversationEventType::LEAD_REQUESTED)
+            ->where('payload->lead_id', $lead->id)
             ->exists());
         $this->assertFalse(ConversationEvent::where('conversation_id', $conversation->id)
-            ->where('type', ConversationEventType::LEAD_STARTED)
+            ->where('type', ConversationEventType::LEAD_IDENTITY_CONFIRMATION_REQUESTED)
+            ->exists());
+        $this->assertTrue(ConversationEvent::where('conversation_id', $conversation->id)
+            ->where('type', ConversationEventType::ASSISTANT_MESSAGE_CREATED)
+            ->where('payload->content', 'Thanks. Your lead request has been submitted. Our team will contact you soon.')
             ->exists());
 
         $conversation->refresh();
-        $this->assertSame(ConversationState::LEAD_IDENTITY_CONFIRM, $conversation->state);
+        $this->assertSame(ConversationState::CHAT, $conversation->state);
     }
 
     public function test_chat_completes_lead_intake_and_creates_request(): void

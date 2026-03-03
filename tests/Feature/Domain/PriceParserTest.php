@@ -15,6 +15,8 @@ class PriceParserTest extends TestCase
         $this->assertSame(9500, $parser->parseToMinorUnits('95.0'));
         $this->assertSame(9500, $parser->parseToMinorUnits('95.00'));
         $this->assertSame(9500, $parser->parseToMinorUnits('£95.00'));
+        $this->assertSame(120000, $parser->parseToMinorUnits('$1,200'));
+        $this->assertSame(120050, $parser->parseToMinorUnits('$1,200.50'));
     }
 
     public function test_rejects_invalid_or_unsupported_formats(): void
@@ -23,6 +25,7 @@ class PriceParserTest extends TestCase
 
         $this->assertNull($parser->parseToMinorUnits('95.555'));
         $this->assertNull($parser->parseToMinorUnits('95,00'));
+        $this->assertNull($parser->parseToMinorUnits('1,20'));
         $this->assertNull($parser->parseToMinorUnits('-95'));
         $this->assertNull($parser->parseToMinorUnits(''));
     }

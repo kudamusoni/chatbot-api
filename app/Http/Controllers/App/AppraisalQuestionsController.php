@@ -117,6 +117,11 @@ class AppraisalQuestionsController extends Controller
         }
 
         if (array_key_exists('is_required', $validated)) {
+            if (AppraisalQuestion::isMandatoryKey((string) $question->key) && !$validated['is_required']) {
+                throw ValidationException::withMessages([
+                    'is_required' => ['This default question is mandatory and must remain required.'],
+                ]);
+            }
             $question->required = (bool) $validated['is_required'];
         }
 
@@ -125,6 +130,11 @@ class AppraisalQuestionsController extends Controller
         }
 
         if (array_key_exists('is_active', $validated)) {
+            if (AppraisalQuestion::isMandatoryKey((string) $question->key) && !$validated['is_active']) {
+                throw ValidationException::withMessages([
+                    'is_active' => ['This default question is mandatory and must remain active.'],
+                ]);
+            }
             $question->is_active = (bool) $validated['is_active'];
         }
 
@@ -144,6 +154,12 @@ class AppraisalQuestionsController extends Controller
             ->where('client_id', $currentClient->id())
             ->where('id', $id)
             ->firstOrFail();
+
+        if (AppraisalQuestion::isMandatoryKey((string) $question->key)) {
+            throw ValidationException::withMessages([
+                'id' => ['This default question is mandatory and cannot be deleted.'],
+            ]);
+        }
 
         $question->delete();
 

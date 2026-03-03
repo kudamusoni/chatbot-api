@@ -48,7 +48,7 @@ class SettingsController extends Controller
         }
 
         $settingsData = [];
-        $allowlist = ['bot_name', 'brand_color', 'accent_color', 'logo_url', 'prompt_settings'];
+        $allowlist = ['bot_name', 'brand_color', 'accent_color', 'logo_url', 'prompt_settings', 'ai_enabled', 'ai_normalization_enabled'];
         foreach ($allowlist as $key) {
             if (array_key_exists($key, $validated)) {
                 $settingsData[$key] = $validated[$key];
@@ -272,6 +272,8 @@ class SettingsController extends Controller
             'prompt_settings' => $this->sanitizePromptSettings(is_array($settings->prompt_settings) ? $settings->prompt_settings : []),
             'allowed_origins' => is_array($settings->allowed_origins) ? $settings->allowed_origins : [],
             'widget_security_version' => (int) ($settings->widget_security_version ?? 1),
+            'ai_enabled' => (bool) ($settings->ai_enabled ?? false),
+            'ai_normalization_enabled' => (bool) ($settings->ai_normalization_enabled ?? false),
         ];
     }
 

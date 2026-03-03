@@ -22,6 +22,8 @@ class ClientSetting extends Model
         'widget_enabled',
         'allowed_origins',
         'widget_security_version',
+        'ai_enabled',
+        'ai_normalization_enabled',
     ];
 
     protected function casts(): array
@@ -32,6 +34,8 @@ class ClientSetting extends Model
             'widget_enabled' => 'boolean',
             'allowed_origins' => 'array',
             'widget_security_version' => 'integer',
+            'ai_enabled' => 'boolean',
+            'ai_normalization_enabled' => 'boolean',
         ];
     }
 
@@ -53,6 +57,8 @@ class ClientSetting extends Model
                 'prompt_settings' => [],
                 'allowed_origins' => [],
                 'widget_security_version' => 1,
+                'ai_enabled' => false,
+                'ai_normalization_enabled' => false,
             ]
         );
     }

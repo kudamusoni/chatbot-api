@@ -5,6 +5,7 @@ namespace App\Http\Controllers\App;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\App\UpdateLeadRequest;
 use App\Models\Lead;
+use App\Models\Valuation;
 use App\Services\AuditLogger;
 use App\Support\CurrentClient;
 use App\Support\DashboardListDefaults;
@@ -75,7 +76,26 @@ class LeadController extends Controller
             ->where('id', $id)
             ->firstOrFail();
 
-        return response()->json(['data' => LeadPresenter::detail($lead, $user)]);
+        $valuations = Valuation::query()
+            ->where('client_id', $currentClient->id())
+            ->where('conversation_id', $lead->conversation_id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (Valuation $valuation) => [
+                'id' => $valuation->id,
+                'status' => $valuation->status->value,
+                'created_at' => $valuation->created_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
+                'updated_at' => $valuation->updated_at?->copy()->utc()->format('Y-m-d\TH:i:s\Z'),
+            ])
+            ->values();
+
+        return response()->json([
+            'lead_id' => $lead->id,
+            'conversation_id' => $lead->conversation_id,
+            'valuations' => $valuations,
+            'lead' => LeadPresenter::detail($lead, $user),
+        ]);
     }
 
     public function update(UpdateLeadRequest $request, string $id): JsonResponse

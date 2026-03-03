@@ -134,6 +134,29 @@ class CatalogImportContractsTest extends TestCase
             ]);
     }
 
+    public function test_retry_returns_invalid_state_when_import_is_failed(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'admin']);
+
+        $import = CatalogImport::create([
+            'client_id' => $client->id,
+            'created_by' => $user->id,
+            'status' => 'FAILED',
+            'attempt' => 1,
+        ]);
+
+        $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->postJson("/app/catalog-imports/{$import->id}/retry")
+            ->assertStatus(409)
+            ->assertJson([
+                'error' => 'CONFLICT',
+                'reason_code' => 'INVALID_IMPORT_STATE',
+            ]);
+    }
+
     public function test_errors_download_returns_204_when_no_errors(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);

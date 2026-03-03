@@ -41,9 +41,10 @@ class Phase3CriticalLocksTest extends TestCase
             ->withSession(['active_client_id' => $client->id])
             ->getJson('/app/leads/' . $lead->id)
             ->assertOk()
-            ->assertJsonPath('data.name', 'Jo*** Sm***')
-            ->assertJsonPath('data.email', 'jo***@gm***.com')
-            ->assertJsonPath('data.phone', '+44******0123');
+            ->assertJsonPath('lead.name', 'Jo*** Sm***')
+            ->assertJsonPath('lead.email', 'jo***@gm***.com')
+            ->assertJsonPath('lead.phone', '+44******0123')
+            ->assertJsonPath('lead_id', $lead->id);
 
         $export = $this->actingAs($support, 'web')
             ->withSession(['active_client_id' => $client->id])
@@ -78,9 +79,10 @@ class Phase3CriticalLocksTest extends TestCase
             ->withSession(['active_client_id' => $client->id])
             ->getJson('/app/leads/' . $lead->id)
             ->assertOk()
-            ->assertJsonPath('data.name', 'John Smith')
-            ->assertJsonPath('data.email', 'john.smith@gmail.com')
-            ->assertJsonPath('data.phone', '+447700900123');
+            ->assertJsonPath('lead.name', 'John Smith')
+            ->assertJsonPath('lead.email', 'john.smith@gmail.com')
+            ->assertJsonPath('lead.phone', '+447700900123')
+            ->assertJsonPath('lead_id', $lead->id);
 
         $export = $this->actingAs($super, 'web')
             ->withSession(['active_client_id' => $client->id])
@@ -149,7 +151,7 @@ class Phase3CriticalLocksTest extends TestCase
         $this->assertSame(['m1', 'm2', 'm3'], array_column($response->json('data'), 'content'));
     }
 
-    public function test_conversation_messages_response_includes_lead_id_and_valuation_id(): void
+    public function test_conversation_messages_response_includes_leads_and_all_valuations(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
         $viewer = User::factory()->create();
@@ -172,7 +174,7 @@ class Phase3CriticalLocksTest extends TestCase
             'content' => 'hello',
         ]);
 
-        $lead = Lead::create([
+        $olderLead = Lead::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
             'name' => 'John Smith',
@@ -183,8 +185,19 @@ class Phase3CriticalLocksTest extends TestCase
             'phone_hash' => hash('sha256', '+447700900123'),
             'status' => 'REQUESTED',
         ]);
+        $newerLead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Jane Doe',
+            'email' => 'jane.doe@gmail.com',
+            'email_hash' => hash('sha256', 'jane.doe@gmail.com'),
+            'phone_raw' => '+447700900124',
+            'phone_normalized' => '+447700900124',
+            'phone_hash' => hash('sha256', '+447700900124'),
+            'status' => 'CONTACTED',
+        ]);
 
-        $valuation = Valuation::create([
+        $olderValuation = Valuation::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
             'status' => ValuationStatus::PENDING,
@@ -192,13 +205,28 @@ class Phase3CriticalLocksTest extends TestCase
             'input_snapshot' => ['maker' => 'Acme'],
             'result' => null,
         ]);
+        $newerValuation = Valuation::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'status' => ValuationStatus::COMPLETED,
+            'snapshot_hash' => hash('sha256', 'snapshot-2'),
+            'input_snapshot' => ['maker' => 'Omega'],
+            'result' => ['median' => 10000],
+        ]);
 
-        $this->actingAs($viewer, 'web')
+        $response = $this->actingAs($viewer, 'web')
             ->withSession(['active_client_id' => $client->id])
             ->getJson('/app/conversations/' . $conversation->id . '/messages')
             ->assertOk()
-            ->assertJsonPath('lead_id', $lead->id)
-            ->assertJsonPath('valuation_id', $valuation->id);
+            ->assertJsonMissingPath('lead_id')
+            ->assertJsonCount(2, 'leads')
+            ->assertJsonCount(2, 'valuations')
+            ->json();
+
+        $this->assertSame($newerLead->id, $response['leads'][0]['id']);
+        $this->assertSame($olderLead->id, $response['leads'][1]['id']);
+        $this->assertSame($newerValuation->id, $response['valuations'][0]['id']);
+        $this->assertSame($olderValuation->id, $response['valuations'][1]['id']);
     }
 
     public function test_valuations_include_currency_and_minor_unit_ints(): void
@@ -307,5 +335,55 @@ class Phase3CriticalLocksTest extends TestCase
             ->assertJsonMissingPath('data.lead')
             ->assertJsonMissingPath('data.messages')
             ->assertJsonMissingPath('data.message_ids');
+    }
+
+    public function test_lead_detail_response_includes_all_conversation_valuations(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $viewer = User::factory()->create();
+        $viewer->clients()->attach($client->id, ['role' => 'viewer']);
+
+        [$conversation] = Conversation::createWithToken($client->id);
+
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'John Smith',
+            'email' => 'john.smith@gmail.com',
+            'email_hash' => hash('sha256', 'john.smith@gmail.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
+
+        $older = Valuation::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'status' => ValuationStatus::PENDING,
+            'snapshot_hash' => hash('sha256', 'lead-detail-old'),
+            'input_snapshot' => ['maker' => 'Old'],
+            'result' => null,
+        ]);
+
+        $newer = Valuation::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'status' => ValuationStatus::COMPLETED,
+            'snapshot_hash' => hash('sha256', 'lead-detail-new'),
+            'input_snapshot' => ['maker' => 'New'],
+            'result' => ['median' => 10000],
+        ]);
+
+        $response = $this->actingAs($viewer, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->getJson('/app/leads/' . $lead->id)
+            ->assertOk()
+            ->assertJsonPath('lead_id', $lead->id)
+            ->assertJsonCount(2, 'valuations')
+            ->json();
+
+        $this->assertSame($newer->id, $response['valuations'][0]['id']);
+        $this->assertSame($older->id, $response['valuations'][1]['id']);
     }
 }

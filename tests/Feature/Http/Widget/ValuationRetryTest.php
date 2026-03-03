@@ -6,6 +6,7 @@ use App\Enums\ConversationEventType;
 use App\Enums\ConversationState;
 use App\Enums\ValuationStatus;
 use App\Models\ConversationEvent;
+use App\Models\Lead;
 use App\Models\Valuation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -29,10 +30,22 @@ class ValuationRetryTest extends TestCase
         // Create a failed valuation
         $inputSnapshot = ['maker' => 'Royal Doulton', 'age' => 'circa 1950'];
         $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Lead User',
+            'email' => 'lead@example.com',
+            'email_hash' => hash('sha256', 'lead@example.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
 
         $valuation = Valuation::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
+            'lead_id' => $lead->id,
             'status' => ValuationStatus::FAILED,
             'snapshot_hash' => $snapshotHash,
             'input_snapshot' => $inputSnapshot,
@@ -74,10 +87,22 @@ class ValuationRetryTest extends TestCase
 
         $inputSnapshot = ['maker' => 'Royal Doulton'];
         $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Lead User',
+            'email' => 'lead@example.com',
+            'email_hash' => hash('sha256', 'lead@example.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
 
         Valuation::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
+            'lead_id' => $lead->id,
             'status' => ValuationStatus::FAILED,
             'snapshot_hash' => $snapshotHash,
             'input_snapshot' => $inputSnapshot,
@@ -188,10 +213,22 @@ class ValuationRetryTest extends TestCase
 
         $inputSnapshot = ['maker' => 'Royal Doulton'];
         $snapshotHash = Valuation::generateSnapshotHash($inputSnapshot);
+        $lead = Lead::create([
+            'conversation_id' => $conversation->id,
+            'client_id' => $client->id,
+            'name' => 'Lead User',
+            'email' => 'lead@example.com',
+            'email_hash' => hash('sha256', 'lead@example.com'),
+            'phone_raw' => '+447700900123',
+            'phone_normalized' => '+447700900123',
+            'phone_hash' => hash('sha256', '+447700900123'),
+            'status' => 'REQUESTED',
+        ]);
 
         Valuation::create([
             'conversation_id' => $conversation->id,
             'client_id' => $client->id,
+            'lead_id' => $lead->id,
             'status' => ValuationStatus::FAILED,
             'snapshot_hash' => $snapshotHash,
             'input_snapshot' => $inputSnapshot,

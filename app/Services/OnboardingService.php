@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Client;
+use App\Models\AppraisalQuestion;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -37,6 +38,7 @@ class OnboardingService
             ]);
 
             $client->users()->attach($user->id, ['role' => 'owner']);
+            AppraisalQuestion::ensureDefaultsForClient((string) $client->id);
 
             return [
                 'user' => $user,
@@ -65,4 +67,3 @@ class OnboardingService
         return $slug;
     }
 }
-

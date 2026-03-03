@@ -59,11 +59,14 @@ class ValuationController extends Controller
             ->where('id', $id)
             ->firstOrFail();
 
-        $leadId = Lead::query()
-            ->where('client_id', $currentClient->id())
-            ->where('conversation_id', $valuation->conversation_id)
-            ->orderByDesc('created_at')
-            ->value('id');
+        $leadId = $valuation->lead_id;
+        if (!is_string($leadId) || trim($leadId) === '') {
+            $leadId = Lead::query()
+                ->where('client_id', $currentClient->id())
+                ->where('conversation_id', $valuation->conversation_id)
+                ->orderByDesc('created_at')
+                ->value('id');
+        }
 
         return response()->json([
             'data' => array_merge(ValuationPresenter::detail($valuation), [

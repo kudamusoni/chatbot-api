@@ -7,7 +7,9 @@ use App\Models\AppraisalQuestion;
 use App\Models\Client;
 use App\Models\Conversation;
 use App\Models\ConversationEvent;
+use App\Models\Lead;
 use App\Services\ConversationEventRecorder;
+use Illuminate\Support\Str;
 
 /**
  * Test helper trait for conversation-related tests.
@@ -103,6 +105,31 @@ trait InteractsWithConversations
         ?string $idempotencyKey = null,
         ?string $correlationId = null
     ): array {
+        if ($type === ConversationEventType::VALUATION_REQUESTED && !isset($payload['lead_id'])) {
+            $leadId = Lead::query()
+                ->where('conversation_id', $conversation->id)
+                ->latest('created_at')
+                ->value('id');
+
+            if (!is_string($leadId) || $leadId === '') {
+                $lead = Lead::query()->create([
+                    'id' => (string) Str::uuid(),
+                    'conversation_id' => $conversation->id,
+                    'client_id' => $conversation->client_id,
+                    'name' => 'Test Lead',
+                    'email' => 'test@example.com',
+                    'email_hash' => hash('sha256', 'test@example.com'),
+                    'phone_raw' => '+441234567890',
+                    'phone_normalized' => '+441234567890',
+                    'phone_hash' => hash('sha256', '+441234567890'),
+                    'status' => 'REQUESTED',
+                ]);
+                $leadId = (string) $lead->id;
+            }
+
+            $payload['lead_id'] = $leadId;
+        }
+
         return $this->getEventRecorder()->record(
             $conversation,
             $type,

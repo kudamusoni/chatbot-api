@@ -16,10 +16,14 @@ class Valuation extends Model
     protected $fillable = [
         'conversation_id',
         'client_id',
+        'lead_id',
         'request_event_id',
         'status',
         'snapshot_hash',
         'input_snapshot',
+        'preflight_status',
+        'preflight_details',
+        'confidence_cap',
         'result',
     ];
 
@@ -29,6 +33,8 @@ class Valuation extends Model
             'status' => ValuationStatus::class,
             'request_event_id' => 'integer',
             'input_snapshot' => 'array',
+            'preflight_details' => 'array',
+            'confidence_cap' => 'float',
             'result' => 'array',
         ];
     }
@@ -38,10 +44,10 @@ class Valuation extends Model
      */
     public static function generateSnapshotHash(array $inputSnapshot): string
     {
-        // Sort keys for consistent hashing
-        ksort($inputSnapshot);
+        $normalized = self::normalizeSnapshotForStorage($inputSnapshot);
+        self::recursiveKsort($normalized);
 
-        return hash('sha256', json_encode($inputSnapshot));
+        return hash('sha256', json_encode($normalized));
     }
 
     /**
@@ -53,13 +59,15 @@ class Valuation extends Model
         array $inputSnapshot,
         ?int $requestEventId = null
     ): self {
+        $structured = self::normalizeSnapshotForStorage($inputSnapshot);
+
         return self::create([
             'conversation_id' => $conversationId,
             'client_id' => $clientId,
             'request_event_id' => $requestEventId,
             'status' => ValuationStatus::PENDING,
-            'snapshot_hash' => self::generateSnapshotHash($inputSnapshot),
-            'input_snapshot' => $inputSnapshot,
+            'snapshot_hash' => self::generateSnapshotHash($structured),
+            'input_snapshot' => $structured,
         ]);
     }
 
@@ -115,6 +123,11 @@ class Valuation extends Model
         return $this->belongsTo(Client::class);
     }
 
+    public function lead(): BelongsTo
+    {
+        return $this->belongsTo(Lead::class);
+    }
+
     /**
      * Get the event that requested this valuation.
      */
@@ -165,5 +178,43 @@ class Valuation extends Model
         ]);
 
         return $this;
+    }
+
+    /**
+     * @param array<string, mixed> $inputSnapshot
+     * @return array<string, mixed>
+     */
+    public static function normalizeSnapshotForStorage(array $inputSnapshot): array
+    {
+        if (
+            array_key_exists('raw', $inputSnapshot)
+            || array_key_exists('normalized', $inputSnapshot)
+            || array_key_exists('normalization_meta', $inputSnapshot)
+        ) {
+            return [
+                'raw' => is_array($inputSnapshot['raw'] ?? null) ? $inputSnapshot['raw'] : [],
+                'normalized' => is_array($inputSnapshot['normalized'] ?? null) ? $inputSnapshot['normalized'] : [],
+                'normalization_meta' => is_array($inputSnapshot['normalization_meta'] ?? null) ? $inputSnapshot['normalization_meta'] : [],
+            ];
+        }
+
+        return [
+            'raw' => $inputSnapshot,
+            'normalized' => [],
+            'normalization_meta' => [],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $value
+     */
+    private static function recursiveKsort(array &$value): void
+    {
+        ksort($value);
+        foreach ($value as &$item) {
+            if (is_array($item)) {
+                self::recursiveKsort($item);
+            }
+        }
     }
 }

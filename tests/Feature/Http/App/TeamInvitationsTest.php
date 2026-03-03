@@ -177,4 +177,38 @@ class TeamInvitationsTest extends TestCase
             'role' => 'admin',
         ]);
     }
+
+    public function test_preview_invitation_includes_invited_email(): void
+    {
+        Mail::fake();
+
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $owner = User::factory()->create();
+        $owner->clients()->attach($client->id, ['role' => 'owner']);
+
+        $this->actingAs($owner, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->postJson('/app/team/invitations', [
+                'email' => 'preview@example.com',
+                'role' => 'viewer',
+            ])
+            ->assertOk();
+
+        $queuedMail = null;
+        Mail::assertQueued(ClientInvitationMail::class, function (ClientInvitationMail $mail) use (&$queuedMail): bool {
+            $queuedMail = $mail;
+            return true;
+        });
+        $this->assertNotNull($queuedMail);
+
+        parse_str((string) parse_url($queuedMail->acceptUrl, PHP_URL_QUERY), $qs);
+        $token = $qs['token'] ?? null;
+        $this->assertNotNull($token);
+
+        $this->getJson('/app/onboarding/invitations/preview?token=' . urlencode((string) $token))
+            ->assertOk()
+            ->assertJsonPath('client_name', 'Client A')
+            ->assertJsonPath('email', 'preview@example.com')
+            ->assertJsonPath('role', 'viewer');
+    }
 }

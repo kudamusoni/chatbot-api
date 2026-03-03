@@ -2,9 +2,12 @@
 
 namespace App\Providers;
 
+use App\Contracts\AiProvider;
 use App\Events\Conversation\ConversationEventRecorded;
+use App\Listeners\DispatchAssistantResponseJob;
 use App\Listeners\DispatchValuationJob;
 use App\Projectors\ConversationProjector;
+use App\Services\Ai\OpenAiProvider;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
@@ -15,7 +18,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->bind(AiProvider::class, OpenAiProvider::class);
     }
 
     /**
@@ -35,5 +38,11 @@ class AppServiceProvider extends ServiceProvider
             ConversationEventRecorded::class,
             [DispatchValuationJob::class, 'handle']
         );
+
+        Event::listen(
+            ConversationEventRecorded::class,
+            [DispatchAssistantResponseJob::class, 'handle']
+        );
+
     }
 }

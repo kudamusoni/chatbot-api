@@ -253,7 +253,7 @@ class ValuationEngineTest extends TestCase
         $this->assertEquals(10000, $result['median']);
     }
 
-    public function test_multiple_search_terms_match(): void
+    public function test_multiple_search_terms_use_weighted_matching(): void
     {
         $this->createComp(['title' => 'Royal Doulton Porcelain Vase', 'price' => 10000]);
         $this->createComp(['title' => 'Wedgwood Porcelain Plate', 'price' => 20000]);
@@ -265,8 +265,61 @@ class ValuationEngineTest extends TestCase
             'material' => 'Porcelain',
         ]);
 
-        // Should match: Royal Doulton Porcelain Vase, Wedgwood Porcelain Plate, Royal Worcester Cup
-        $this->assertEquals(3, $result['count']);
+        // Weighted matching favors maker-anchored comps.
+        $this->assertEquals(2, $result['count']);
+    }
+
+    public function test_item_type_anchor_prevents_broad_mismatch_comps(): void
+    {
+        $this->createComp([
+            'title' => 'Chinese Qing Dynasty Blue & White Vase',
+            'description' => 'Asian Art',
+            'price' => 70000,
+            'low_estimate' => 50000,
+            'high_estimate' => 90000,
+            'source' => ProductSource::ESTIMATE,
+        ]);
+
+        $this->createComp([
+            'title' => 'Royal Albert Old Country Roses Tea Set',
+            'description' => 'Tea and Dinner Sets',
+            'price' => 30000,
+            'low_estimate' => 20000,
+            'high_estimate' => 40000,
+            'source' => ProductSource::ESTIMATE,
+        ]);
+
+        $result = $this->engine->compute($this->client->id, [
+            'maker' => 'Qing',
+            'model' => 'Dynasty',
+            'item_type' => 'vase',
+            'age' => '20 years old',
+            'condition' => 'used but in decent condition',
+        ]);
+
+        $this->assertSame(1, $result['count']);
+        $this->assertSame('Chinese Qing Dynasty Blue & White Vase', $result['matched_comps_sample'][0]['title']);
+    }
+
+    public function test_maker_or_model_must_match_when_provided(): void
+    {
+        $this->createComp([
+            'title' => 'Victorian Porcelain Vase',
+            'description' => 'Antique Furniture',
+            'price' => 30000,
+            'source' => ProductSource::ESTIMATE,
+            'low_estimate' => 20000,
+            'high_estimate' => 40000,
+        ]);
+
+        $result = $this->engine->compute($this->client->id, [
+            'maker' => 'Qing',
+            'model' => 'Dynasty',
+            'item_type' => 'vase',
+        ]);
+
+        $this->assertSame(0, $result['count']);
+        $this->assertNull($result['median']);
     }
 
     public function test_data_quality_is_always_internal(): void

@@ -16,6 +16,7 @@ class Lead extends Model
         'conversation_id',
         'client_id',
         'request_event_id',
+        'lead_capture_action_id',
         'name',
         'email',
         'email_hash',

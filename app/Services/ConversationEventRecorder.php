@@ -109,12 +109,18 @@ class ConversationEventRecorder
         Conversation $conversation,
         string $content,
         ?string $idempotencyKey = null,
-        ?string $correlationId = null
+        ?string $correlationId = null,
+        ?string $turnId = null
     ): array {
+        $payload = ['content' => $content];
+        if ($turnId !== null) {
+            $payload['turn_id'] = $turnId;
+        }
+
         return $this->record(
             $conversation,
             ConversationEventType::USER_MESSAGE_CREATED,
-            ['content' => $content],
+            $payload,
             $idempotencyKey,
             $correlationId
         );
@@ -126,12 +132,20 @@ class ConversationEventRecorder
     public function recordAssistantMessage(
         Conversation $conversation,
         string $content,
-        ?string $correlationId = null
+        ?string $correlationId = null,
+        ?string $turnId = null,
+        ?string $idempotencyKey = null
     ): array {
+        $payload = ['content' => $content];
+        if ($turnId !== null) {
+            $payload['turn_id'] = $turnId;
+        }
+
         return $this->record(
             $conversation,
             ConversationEventType::ASSISTANT_MESSAGE_CREATED,
-            ['content' => $content],
+            $payload,
+            $idempotencyKey,
             correlationId: $correlationId
         );
     }

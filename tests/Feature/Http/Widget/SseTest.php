@@ -224,7 +224,7 @@ class SseTest extends TestCase
         $this->assertSame($conversation->id, $envelope['conversation_id']);
         $this->assertSame($client->id, $envelope['client_id']);
         $this->assertSame('user.message.created', $envelope['type']);
-        $this->assertSame(['content' => 'Test message'], $envelope['payload']);
+        $this->assertSame('Test message', $envelope['payload']['content'] ?? null);
     }
 
     // =========================================================================
