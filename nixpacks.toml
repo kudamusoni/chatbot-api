@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["php84", "php84Packages.composer", "nginx", "libmysqlclient", "nodejs_18", "npm-9_x"]
+
+[phases.install]
+cmds = ["composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev --ignore-platform-req=ext-pcntl"]
+
+[phases.build]
+cmds = ["php artisan optimize:clear"]
+
+[start]
+cmd = "php artisan serve --host=0.0.0.0 --port=${PORT:-8000}"
