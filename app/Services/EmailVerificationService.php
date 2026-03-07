@@ -6,6 +6,7 @@ use App\Mail\VerifyEmailMail;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 
@@ -29,7 +30,14 @@ class EmailVerificationService
             . '/verify-email'
             . ($query !== '' ? "?{$query}" : '');
 
-        Mail::to($user->email)->queue(new VerifyEmailMail(
+        Log::info('queue.verify_email', [
+            'email' => $user->email,
+            'mailer' => config('mail.default'),
+            'smtp_host' => config('mail.mailers.smtp.host'),
+            'smtp_port' => config('mail.mailers.smtp.port'),
+        ]);
+
+        Mail::mailer('smtp')->to($user->email)->queue(new VerifyEmailMail(
             (string) $user->name,
             $frontendUrl
         ));
