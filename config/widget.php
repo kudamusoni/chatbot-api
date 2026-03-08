@@ -8,7 +8,17 @@ $defaultSseConnections = match ($appEnv) {
 };
 
 return [
-    'script_url' => (string) env('WIDGET_SCRIPT_URL', rtrim((string) env('APP_URL', ''), '/') . '/widget.js'),
+    'script_url' => (function (): string {
+        $scriptUrlOverride = trim((string) env('WIDGET_SCRIPT_URL', ''));
+        if ($scriptUrlOverride !== '') {
+            return $scriptUrlOverride;
+        }
+
+        $baseUrl = rtrim((string) env('WIDGET_BASE_URL', (string) env('APP_URL', '')), '/');
+        $scriptPath = '/' . ltrim((string) env('WIDGET_SCRIPT_PATH', 'embed.js'), '/');
+
+        return $baseUrl . $scriptPath;
+    })(),
     'security' => [
         'bypass_local_origin_checks' => (bool) env('WIDGET_ORIGIN_CHECK_BYPASS_LOCAL', true),
         'no_origin_max_idle_hours' => (int) env('WIDGET_NO_ORIGIN_MAX_IDLE_HOURS', 24),
