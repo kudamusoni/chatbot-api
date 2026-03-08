@@ -11,6 +11,20 @@ class UpdateDomainsRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $origins = $this->input('allowed_origins');
+
+        if ($origins === null) {
+            $origins = $this->input('allowedOrigins');
+        }
+
+        $this->merge([
+            // Treat omitted payload as "clear domains" and support camelCase clients.
+            'allowed_origins' => $origins ?? [],
+        ]);
+    }
+
     public function rules(): array
     {
         return [
@@ -19,4 +33,3 @@ class UpdateDomainsRequest extends FormRequest
         ];
     }
 }
-

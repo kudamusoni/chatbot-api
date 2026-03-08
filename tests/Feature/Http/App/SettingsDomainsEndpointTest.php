@@ -106,5 +106,31 @@ class SettingsDomainsEndpointTest extends TestCase
             'widget_security_version' => 5,
         ]);
     }
-}
 
+    public function test_domains_endpoint_accepts_camel_case_payload_and_missing_defaults_to_empty_array(): void
+    {
+        $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
+        $user = User::factory()->create();
+        $user->clients()->attach($client->id, ['role' => 'admin']);
+
+        ClientSetting::create([
+            'client_id' => $client->id,
+            'allowed_origins' => ['https://old.example.com'],
+            'widget_security_version' => 3,
+        ]);
+
+        $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings/domains', [
+                'allowedOrigins' => ['https://example.com'],
+            ])
+            ->assertOk()
+            ->assertJsonPath('allowed_origins.0', 'https://example.com');
+
+        $this->actingAs($user, 'web')
+            ->withSession(['active_client_id' => $client->id])
+            ->putJson('/app/settings/domains', [])
+            ->assertOk()
+            ->assertJsonPath('allowed_origins', []);
+    }
+}
