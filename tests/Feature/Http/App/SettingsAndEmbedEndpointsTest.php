@@ -291,6 +291,7 @@ class SettingsAndEmbedEndpointsTest extends TestCase
     public function test_embed_code_snippet_contract_is_stable(): void
     {
         config()->set('widget.script_url', 'https://api.example.com/widget.js');
+        config()->set('widget.api_url', 'https://widget.example.com');
 
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
         $viewer = User::factory()->create();
@@ -308,8 +309,10 @@ class SettingsAndEmbedEndpointsTest extends TestCase
 
         $response->assertJson([
             'script_url' => 'https://api.example.com/widget.js',
+            'api_url' => 'https://widget.example.com',
             'params' => [
                 'client_id' => $client->id,
+                'api_url' => 'https://widget.example.com',
                 'widget_security_version' => 5,
             ],
             'widget_security_version' => 5,
@@ -317,7 +320,9 @@ class SettingsAndEmbedEndpointsTest extends TestCase
 
         $snippet = (string) $response->json('snippet');
         $this->assertStringContainsString('<script src="https://api.example.com/widget.js" defer', $snippet);
+        $this->assertStringContainsString('data-auto-init', $snippet);
         $this->assertStringContainsString('data-client-id="' . $client->id . '"', $snippet);
+        $this->assertStringContainsString('data-api-url="https://widget.example.com"', $snippet);
         $this->assertStringContainsString('data-widget-security-version="5"', $snippet);
     }
 }

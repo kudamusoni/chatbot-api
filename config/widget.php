@@ -19,6 +19,14 @@ return [
 
         return $baseUrl . $scriptPath;
     })(),
+    'api_url' => (function (): string {
+        $apiUrlOverride = trim((string) env('WIDGET_API_URL', ''));
+        if ($apiUrlOverride !== '') {
+            return rtrim($apiUrlOverride, '/');
+        }
+
+        return rtrim((string) env('APP_URL', ''), '/');
+    })(),
     'security' => [
         'bypass_local_origin_checks' => (bool) env('WIDGET_ORIGIN_CHECK_BYPASS_LOCAL', true),
         'no_origin_max_idle_hours' => (int) env('WIDGET_NO_ORIGIN_MAX_IDLE_HOURS', 24),
