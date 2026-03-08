@@ -24,6 +24,8 @@ class UpdateSettingsRequest extends FormRequest
             'prompt_settings' => ['nullable', 'array'],
             'ai_enabled' => ['nullable', 'boolean'],
             'ai_normalization_enabled' => ['nullable', 'boolean'],
+            'allowed_origins' => ['nullable', 'array', 'max:50'],
+            'allowed_origins.*' => ['nullable', 'string', 'max:255'],
 
             // Flat additive prompt aliases.
             'fallback_message' => ['nullable', 'string', 'max:2000'],

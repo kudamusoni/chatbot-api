@@ -67,7 +67,7 @@ class SettingsAndEmbedEndpointsTest extends TestCase
             ]);
     }
 
-    public function test_admin_can_put_settings_and_unknown_keys_are_ignored_and_domains_version_unchanged(): void
+    public function test_admin_can_put_settings_and_allowed_origins_are_persisted_and_version_bumped_when_changed(): void
     {
         $client = Client::create(['name' => 'Client A', 'slug' => 'client-a', 'settings' => []]);
         $admin = User::factory()->create();
@@ -93,7 +93,10 @@ class SettingsAndEmbedEndpointsTest extends TestCase
                 'accent_color' => '#22C55E',
                 'logo_url' => 'https://cdn.example.com/logo.png',
                 'prompt_settings' => ['tone' => 'concise'],
-                'allowed_origins' => ['https://malicious-write-should-ignore.example'],
+                'allowed_origins' => [
+                    'https://Sub.Example.com:443/',
+                    'https://sub.example.com',
+                ],
                 'widget_security_version' => 999,
                 'unknown_setting' => 'ignore-me',
             ])
@@ -102,8 +105,8 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $response->assertJsonPath('client.name', 'Acme Auctions');
         $response->assertJsonPath('settings.bot_name', 'Acme Assistant');
         $response->assertJsonPath('settings.prompt_settings', ['tone' => 'concise']);
-        $response->assertJsonPath('settings.allowed_origins', ['https://example.com']);
-        $response->assertJsonPath('settings.widget_security_version', 7);
+        $response->assertJsonPath('settings.allowed_origins', ['https://sub.example.com']);
+        $response->assertJsonPath('settings.widget_security_version', 8);
 
         $client->refresh();
         $this->assertSame('Acme Auctions', $client->name);
@@ -114,8 +117,8 @@ class SettingsAndEmbedEndpointsTest extends TestCase
         $this->assertSame('#22C55E', $settings->accent_color);
         $this->assertSame('https://cdn.example.com/logo.png', $settings->logo_url);
         $this->assertSame(['tone' => 'concise'], $settings->prompt_settings);
-        $this->assertSame(['https://example.com'], $settings->allowed_origins);
-        $this->assertSame(7, (int) $settings->widget_security_version);
+        $this->assertSame(['https://sub.example.com'], $settings->allowed_origins);
+        $this->assertSame(8, (int) $settings->widget_security_version);
     }
 
     public function test_get_settings_auto_creates_default_settings_row(): void

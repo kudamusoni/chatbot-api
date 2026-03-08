@@ -48,7 +48,30 @@ class SettingsController extends Controller
         }
 
         $settingsData = [];
-        $allowlist = ['bot_name', 'brand_color', 'accent_color', 'logo_url', 'prompt_settings', 'ai_enabled', 'ai_normalization_enabled'];
+        $allowlist = ['bot_name', 'brand_color', 'accent_color', 'logo_url', 'prompt_settings', 'ai_enabled', 'ai_normalization_enabled', 'allowed_origins'];
+        $allowedOriginsChanged = false;
+        $existingAllowedOrigins = is_array($settings->allowed_origins) ? $settings->allowed_origins : [];
+
+        if (array_key_exists('allowed_origins', $validated)) {
+            $normalized = [];
+            $errors = [];
+            $origins = is_array($validated['allowed_origins']) ? $validated['allowed_origins'] : [];
+            foreach ($origins as $idx => $origin) {
+                $result = $this->normalizeOrigin((string) $origin);
+                if ($result['error'] !== null) {
+                    $errors["allowed_origins.{$idx}"][] = $result['error'];
+                    continue;
+                }
+                $normalized[] = $result['value'];
+            }
+
+            if ($errors !== []) {
+                throw ValidationException::withMessages($errors);
+            }
+
+            $validated['allowed_origins'] = array_values(array_unique($normalized));
+            $allowedOriginsChanged = $existingAllowedOrigins !== $validated['allowed_origins'];
+        }
         foreach ($allowlist as $key) {
             if (array_key_exists($key, $validated)) {
                 $settingsData[$key] = $validated[$key];
@@ -98,6 +121,10 @@ class SettingsController extends Controller
             }
 
             $settings->{$key} = $value;
+        }
+
+        if ($allowedOriginsChanged) {
+            $settings->widget_security_version = ((int) ($settings->widget_security_version ?? 1)) + 1;
         }
         $settings->save();
 
