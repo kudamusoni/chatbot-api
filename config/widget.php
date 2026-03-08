@@ -8,13 +8,22 @@ $defaultSseConnections = match ($appEnv) {
 };
 
 return [
+    'public_base_url' => (function (): string {
+        $publicBase = trim((string) env('WIDGET_PUBLIC_BASE_URL', ''));
+        if ($publicBase !== '') {
+            return rtrim($publicBase, '/');
+        }
+
+        // Backward-compatible fallback.
+        return rtrim((string) env('WIDGET_BASE_URL', (string) env('APP_URL', '')), '/');
+    })(),
     'script_url' => (function (): string {
         $scriptUrlOverride = trim((string) env('WIDGET_SCRIPT_URL', ''));
         if ($scriptUrlOverride !== '') {
             return $scriptUrlOverride;
         }
 
-        $baseUrl = rtrim((string) env('WIDGET_BASE_URL', (string) env('APP_URL', '')), '/');
+        $baseUrl = rtrim((string) env('WIDGET_PUBLIC_BASE_URL', env('WIDGET_BASE_URL', env('APP_URL', ''))), '/');
         $scriptPath = '/' . ltrim((string) env('WIDGET_SCRIPT_PATH', 'embed.js'), '/');
 
         return $baseUrl . $scriptPath;
