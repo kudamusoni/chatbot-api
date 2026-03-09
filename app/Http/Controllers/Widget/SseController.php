@@ -18,22 +18,6 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class SseController extends Controller
 {
     /**
-     * Maximum duration for keepalive loop (seconds).
-     */
-    private const MAX_DURATION = 60;
-
-    /**
-     * Interval between keepalive pings (seconds).
-     */
-    private const PING_INTERVAL = 10;
-
-    /**
-     * Reconnect delay for clients (milliseconds).
-     * Sent via SSE `retry:` directive.
-     */
-    private const RETRY_MS = 2000;
-
-    /**
      * Output buffer for test mode.
      */
     private string $outputBuffer = '';
@@ -243,8 +227,10 @@ class SseController extends Controller
     private function keepaliveLoop(string $conversationId, int $lastSentId, string $tokenHash, string $connectionId): void
     {
         $startTime = time();
+        $maxDuration = $this->maxDurationSeconds();
+        $pingInterval = $this->pingIntervalSeconds();
 
-        while ((time() - $startTime) < self::MAX_DURATION) {
+        while ((time() - $startTime) < $maxDuration) {
             // Check if client disconnected
             if (connection_aborted()) {
                 break;
@@ -267,7 +253,7 @@ class SseController extends Controller
             }
 
             // Wait before next poll
-            sleep(self::PING_INTERVAL);
+            sleep($pingInterval);
         }
     }
 
@@ -306,7 +292,7 @@ class SseController extends Controller
      */
     private function sendRetryDirective(): void
     {
-        $this->output("retry: " . self::RETRY_MS . "\n\n");
+        $this->output("retry: " . $this->retryMs() . "\n\n");
     }
 
     /**
@@ -431,5 +417,20 @@ class SseController extends Controller
     private function connectionTtl(): int
     {
         return (int) config('widget.sse.connection_ttl_seconds', 60);
+    }
+
+    private function maxDurationSeconds(): int
+    {
+        return max(5, (int) config('widget.sse.max_duration_seconds', 60));
+    }
+
+    private function pingIntervalSeconds(): int
+    {
+        return max(1, (int) config('widget.sse.ping_interval_seconds', 10));
+    }
+
+    private function retryMs(): int
+    {
+        return max(250, (int) config('widget.sse.retry_ms', 2000));
     }
 }

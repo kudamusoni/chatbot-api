@@ -361,6 +361,25 @@ class SseTest extends TestCase
         $this->assertStringContainsString('retry: 2000', $content);
     }
 
+    public function test_retry_directive_uses_configured_value(): void
+    {
+        config()->set('widget.sse.retry_ms', 750);
+
+        $client = $this->makeClient();
+        [$conversation, $rawToken] = $this->makeConversation($client);
+
+        $response = $this->get('/api/widget/sse?' . http_build_query([
+            'client_id' => $client->id,
+            'session_token' => $rawToken,
+            'once' => '1',
+        ]));
+
+        $response->assertOk();
+
+        $content = $response->getContent();
+        $this->assertStringContainsString('retry: 750', $content);
+    }
+
     // =========================================================================
     // Replay Complete Signal Tests
     // =========================================================================

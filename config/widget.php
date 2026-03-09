@@ -45,5 +45,8 @@ return [
         'replay_max_age_seconds' => (int) env('SSE_REPLAY_MAX_AGE_SECONDS', 3600),
         'max_connections_per_session' => (int) env('SSE_MAX_CONNECTIONS_PER_SESSION', $defaultSseConnections),
         'connection_ttl_seconds' => (int) env('SSE_CONNECTION_TTL_SECONDS', 60),
+        'max_duration_seconds' => (int) env('SSE_MAX_DURATION_SECONDS', 60),
+        'ping_interval_seconds' => (int) env('SSE_PING_INTERVAL_SECONDS', 10),
+        'retry_ms' => (int) env('SSE_RETRY_MS', 2000),
     ],
 ];
